@@ -3,8 +3,12 @@ import { useEffect, useState, useRef } from "react";
 import * as SplashScreen from "expo-splash-screen";
 import * as Font from "expo-font";
 import { View, Animated, StyleSheet } from "react-native";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 
 SplashScreen.preventAutoHideAsync();
+
+// Create a single client instance
+const queryClient = new QueryClient();
 
 export default function RootLayout() {
   const [fontsLoaded, setFontsLoaded] = useState(false);
@@ -48,20 +52,18 @@ export default function RootLayout() {
     );
   }
 
-  if (!isLoggedIn) {
-    return (
-      <Stack screenOptions={{ headerShown: false }}>
-        <Stack.Screen name="auth/SignInScreen" />
-      </Stack>
-    );
-  }
-
-  // ✅ Updated: Add non-tab screens to the root stack
   return (
-    <Stack screenOptions={{ headerShown: false }}>
-      {/* Tab screens (with tab bar) */}
-      <Stack.Screen name="screens" />
-    </Stack>
+    <QueryClientProvider client={queryClient}>
+      {!isLoggedIn ? (
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="auth/SignInScreen" />
+        </Stack>
+      ) : (
+        <Stack screenOptions={{ headerShown: false }}>
+          <Stack.Screen name="screens" />
+        </Stack>
+      )}
+    </QueryClientProvider>
   );
 }
 
@@ -73,7 +75,7 @@ const styles = StyleSheet.create({
     backgroundColor: "#fff",
   },
   splashImage: { 
-    width: 300, 
-    height: 300 
+    width: 250, 
+    height: 250 
   },
 });

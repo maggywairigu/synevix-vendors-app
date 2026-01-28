@@ -18,8 +18,12 @@ import { useRouter } from "expo-router"
 import RecordPickupModal from "../components/orders/modals/recordPickUpModal"
 import PaymentConfirmationModal from "../components/orders/modals/paymentConfirmationModal"
 import UpdateOrderModal from "../components/orders/modals/updateOrderModel"
+import { useGetAllSaleOrders } from "@/queries/saleQueries"
 
 export default function HomeScreen() {
+  const [searchText, setSearchText] = useState('');
+  const pageLimit = 20
+
   const waveAnim = useRef(new Animated.Value(0)).current
   const fadeAnim = useRef(new Animated.Value(0)).current
   const statCardsAnim = useRef(new Animated.Value(0)).current
@@ -166,7 +170,7 @@ export default function HomeScreen() {
       title: "Update Stock",
       icon: "layers",
       color: "#FF9800",
-      action: () => router.push("/components/forms/orders/walkinSale"),
+      action: () => router.push("/screens/products"),
     },
     {
       id: 6,

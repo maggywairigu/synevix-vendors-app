@@ -18,6 +18,7 @@ import { COLORS } from "@/constants/Colors"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useNavigation } from "@react-navigation/native"
 import { router } from "expo-router"
+import { useGetAllSaleOrders } from "@/queries/saleQueries"
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window")
 
@@ -115,6 +116,9 @@ export default function OrdersScreen() {
   const [activeOrderType, setActiveOrderType] = useState("all")
   const [activePaymentType, setActivePaymentType] = useState("all")
   const [showFilters, setShowFilters] = useState(false)
+  const [searchText, setSearchText] = useState('');
+  const pageLimit = 20
+  const {data, isError, isFetching} = useGetAllSaleOrders({searchText, pageLimit})
   
   // Animations
   const headerAnim = useRef(new Animated.Value(0)).current
@@ -147,246 +151,218 @@ export default function OrdersScreen() {
     ]).start()
   }, [])
 
-  const orders = [
-    // Walk-in Orders
-    {
-      id: "#W001",
-      store: "TechStore Kenya",
-      status: "pending",
-      statusLabel: "Payment Pending",
-      statusColor: "#FF9800",
-      statusBg: "rgba(255, 152, 0, 0.1)",
-      amount: "KES 3,400",
-      time: "2 hours ago",
-      items: [
-        { name: "Packaging Boxes", qty: "30" },
-        { name: "Bubble Wrap", qty: "5" },
-      ],
-      shelf: "#120",
-      payment: "Full Payment",
-      paymentId: "full",
-      paymentStatus: "pending",
-      orderType: "walkin",
-      action: "Confirm Payment",
-      priority: "High",
-      progress: 30,
-      workflow: ORDER_TYPE_WORKFLOWS.walkin,
-      currentStep: 0,
-      totalSteps: 2
-    },
-    {
-      id: "#W002",
-      store: "Home Essentials",
-      status: "payment_confirmed",
-      statusLabel: "Ready for Pickup",
-      statusColor: "#4CAF50",
-      statusBg: "rgba(76, 175, 80, 0.1)",
-      amount: "KES 450",
-      time: "1 hour ago",
-      items: [{ name: "Plastic Containers", qty: "20" }],
-      shelf: "#08",
-      payment: "Full Payment",
-      paymentId: "full",
-      paymentStatus: "confirmed",
-      orderType: "walkin",
-      action: "Mark as Completed",
-      priority: "Medium",
-      progress: 70,
-      workflow: ORDER_TYPE_WORKFLOWS.walkin,
-      currentStep: 1,
-      totalSteps: 2
-    },
-    // Pickup Orders
-    {
-      id: "#P001",
-      store: "Fashion Hub",
-      status: "topack",
-      statusLabel: "To Pack",
-      statusColor: "#FF9800",
-      statusBg: "rgba(255, 152, 0, 0.1)",
-      amount: "KES 1,250",
-      time: "30 min ago",
-      items: [{ name: "T-Shirts", qty: "15" }],
-      shelf: "#45",
-      payment: "Deposit Paid",
-      paymentId: "deposit",
-      paymentStatus: "deposit_paid",
-      orderType: "pickup",
-      action: "Mark as Packed",
-      priority: "Low",
-      progress: 20,
-      workflow: ORDER_TYPE_WORKFLOWS.pickup,
-      currentStep: 0,
-      totalSteps: 4
-    },
-    {
-      id: "#P002",
-      store: "Gadget World",
-      status: "packed",
-      statusLabel: "Ready for Pickup",
-      statusColor: "#4CAF50",
-      statusBg: "rgba(76, 175, 80, 0.1)",
-      amount: "KES 5,800",
-      time: "Just now",
-      items: [
-        { name: "Smartphones", qty: "2" },
-        { name: "Cases", qty: "4" },
-      ],
-      shelf: "#89",
-      payment: "Deposit Paid",
-      paymentId: "deposit",
-      paymentStatus: "deposit_paid",
-      orderType: "pickup",
-      action: "Record Pickup",
-      priority: "High",
-      progress: 50,
-      workflow: ORDER_TYPE_WORKFLOWS.pickup,
-      currentStep: 1,
-      totalSteps: 4
-    },
-    {
-      id: "#P003",
-      store: "Book Palace",
-      status: "pickup_recorded",
-      statusLabel: "Pickup Recorded",
-      statusColor: "#2196F3",
-      statusBg: "rgba(33, 150, 243, 0.1)",
-      amount: "KES 2,300",
-      time: "Yesterday",
-      items: [{ name: "Novels", qty: "12" }],
-      shelf: "#32",
-      payment: "Balance Due (KES 1,150)",
-      paymentId: "deposit",
-      paymentStatus: "balance_due",
-      orderType: "pickup",
-      action: "Confirm Balance Payment",
-      priority: "Medium",
-      progress: 75,
-      workflow: ORDER_TYPE_WORKFLOWS.pickup,
-      currentStep: 2,
-      totalSteps: 4
-    },
-    // Delivery Orders
-    {
-      id: "#D001",
-      store: "ElectroMart",
-      status: "topack",
-      statusLabel: "To Pack",
-      statusColor: "#FF9800",
-      statusBg: "rgba(255, 152, 0, 0.1)",
-      amount: "KES 8,500",
-      time: "2 days ago",
-      items: [
-        { name: "Headphones", qty: "3" },
-        { name: "Chargers", qty: "5" },
-      ],
-      shelf: "#75",
-      payment: "Full Payment",
-      paymentId: "full",
-      paymentStatus: "confirmed",
-      orderType: "delivery",
-      action: "Mark as Packed",
-      priority: "Low",
-      progress: 20,
-      workflow: ORDER_TYPE_WORKFLOWS.delivery,
-      currentStep: 0,
-      totalSteps: 4
-    },
-    {
-      id: "#D002",
-      store: "Furniture City",
-      status: "packed",
-      statusLabel: "Packed",
-      statusColor: "#4CAF50",
-      statusBg: "rgba(76, 175, 80, 0.1)",
-      amount: "KES 15,000",
-      time: "1 week ago",
-      items: [{ name: "Office Chair", qty: "1" }],
-      shelf: "#99",
-      payment: "After Delivery",
-      paymentId: "after",
-      paymentStatus: "pending",
-      orderType: "delivery",
-      action: "Dispatch Order",
-      priority: "Medium",
-      progress: 50,
-      workflow: ORDER_TYPE_WORKFLOWS.delivery,
-      currentStep: 1,
-      totalSteps: 4
-    },
-    {
-      id: "#D003",
-      store: "Super Foods",
-      status: "dispatched",
-      statusLabel: "Dispatched",
-      statusColor: "#2196F3",
-      statusBg: "rgba(33, 150, 243, 0.1)",
-      amount: "KES 1,800",
-      time: "3 days ago",
-      items: [
-        { name: "Groceries", qty: "15" },
-        { name: "Beverages", qty: "8" },
-      ],
-      shelf: "#42",
-      payment: "After Delivery",
-      paymentId: "after",
-      paymentStatus: "pending",
-      orderType: "delivery",
-      action: "Mark as Delivered",
-      priority: "Low",
-      progress: 75,
-      workflow: ORDER_TYPE_WORKFLOWS.delivery,
-      currentStep: 2,
-      totalSteps: 4
-    },
-    // Completed Orders
-    {
-      id: "#C001",
-      store: "TechStore Kenya",
-      status: "completed",
-      statusLabel: "Completed",
-      statusColor: "#607D8B",
-      statusBg: "rgba(96, 125, 139, 0.1)",
-      amount: "KES 3,400",
-      time: "1 day ago",
-      items: [{ name: "Packaging Boxes", qty: "30" }],
-      shelf: "#120",
-      payment: "Full Payment",
-      paymentId: "full",
-      paymentStatus: "confirmed",
-      orderType: "walkin",
-      action: "View Details",
-      priority: "Medium",
-      progress: 100,
-      completed: true,
-      workflow: ORDER_TYPE_WORKFLOWS.walkin,
-      currentStep: 2,
-      totalSteps: 2
-    },
-    {
-      id: "#C002",
-      store: "Fashion Hub",
-      status: "completed",
-      statusLabel: "Completed",
-      statusColor: "#607D8B",
-      statusBg: "rgba(96, 125, 139, 0.1)",
-      amount: "KES 1,250",
-      time: "2 days ago",
-      items: [{ name: "T-Shirts", qty: "15" }],
-      shelf: "#45",
-      payment: "Deposit Paid",
-      paymentId: "deposit",
-      paymentStatus: "confirmed",
-      orderType: "pickup",
-      action: "View Invoice",
-      priority: "Low",
-      progress: 100,
-      completed: true,
-      workflow: ORDER_TYPE_WORKFLOWS.pickup,
-      currentStep: 4,
-      totalSteps: 4
-    },
-  ]
+
+  // Helper function to calculate time ago
+  const getTimeAgo = (timestamp) => {
+    if (!timestamp || !timestamp._seconds) return "Unknown time";
+    
+    const now = Date.now() / 1000;
+    const seconds = timestamp._seconds;
+    const diffInSeconds = now - seconds;
+    
+    if (diffInSeconds < 60) {
+      return "Just now";
+    } else if (diffInSeconds < 3600) {
+      const minutes = Math.floor(diffInSeconds / 60);
+      return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 86400) {
+      const hours = Math.floor(diffInSeconds / 3600);
+      return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+    } else if (diffInSeconds < 2592000) {
+      const days = Math.floor(diffInSeconds / 86400);
+      return `${days} day${days > 1 ? 's' : ''} ago`;
+    } else {
+      return new Date(seconds * 1000).toLocaleDateString();
+    }
+  }
+
+  // Helper function to determine priority based on time
+  const getPriority = (timestamp) => {
+    if (!timestamp || !timestamp._seconds) return "Low";
+    
+    const now = Date.now() / 1000;
+    const seconds = timestamp._seconds;
+    const diffInHours = (now - seconds) / 3600;
+    
+    if (diffInHours > 3) return "High";
+    if (diffInHours > 1) return "Medium";
+    return "Low";
+  }
+
+  // Helper function to get payment status and details
+  const getPaymentDetails = (order) => {
+    const amountPending = parseFloat(order.amountPending || "0");
+    const amountPaid = parseFloat(order.amountPaid || "0");
+    const totalAmount = parseFloat(order.totalAmount || "0");
+    
+    switch(order.paymentTerms) {
+      case "full":
+        if (amountPaid >= totalAmount) {
+          return {
+            paymentId: "full",
+            payment: "Full Payment",
+            paymentStatus: "confirmed",
+            icon: "checkmark-circle",
+            color: "#4CAF50"
+          };
+        } else {
+          return {
+            paymentId: "full",
+            payment: "Payment Pending",
+            paymentStatus: "pending",
+            icon: "close-circle",
+            color: "#F44336"
+          };
+        }
+      case "deposit":
+        if (amountPending === 0) {
+          return {
+            paymentId: "deposit",
+            payment: "Deposit Paid",
+            paymentStatus: "deposit_paid",
+            icon: "time",
+            color: "#FF9800"
+          };
+        } else {
+          return {
+            paymentId: "deposit",
+            payment: `Balance Due (KES ${amountPending.toFixed(2)})`,
+            paymentStatus: "balance_due",
+            icon: "alert-circle",
+            color: "#F44336"
+          };
+        }
+      case "after":
+        if (amountPending === 0) {
+          return {
+            paymentId: "after",
+            payment: "Payment Completed",
+            paymentStatus: "confirmed",
+            icon: "checkmark-circle",
+            color: "#4CAF50"
+          };
+        } else {
+          return {
+            paymentId: "after",
+            payment: `Balance Due (KES ${amountPending.toFixed(2)})`,
+            paymentStatus: "balance_due",
+            icon: "alert-circle",
+            color: "#F44336"
+          };
+        }
+      default:
+        return {
+          paymentId: "full",
+          payment: "Payment Pending",
+          paymentStatus: "pending",
+          icon: "close-circle",
+          color: "#9E9E9E"
+        };
+    }
+  }
+
+  // Helper function to get order workflow details
+  const getWorkflowDetails = (order) => {
+    const workflow = ORDER_TYPE_WORKFLOWS[order.orderType] || ORDER_TYPE_WORKFLOWS.walkin;
+    const status = order.status || "topack";
+    const statusFlow = workflow.statusFlow;
+    const currentStep = statusFlow.indexOf(status);
+    
+    return {
+      workflow,
+      currentStep: currentStep >= 0 ? currentStep : 0,
+      totalSteps: statusFlow.length - 1,
+      statusColor: workflow.statusColors[status] || "#FF9800",
+      statusLabel: workflow.statusLabels[status] || "To Pack",
+      statusBg: `rgba(${parseInt(workflow.statusColors[status]?.slice(1, 3) || "255", 16)}, ${parseInt(workflow.statusColors[status]?.slice(3, 5) || "152", 16)}, ${parseInt(workflow.statusColors[status]?.slice(5, 7) || "0", 16)}, 0.1)`
+    };
+  }
+
+  // Helper function to get next action
+  const getNextAction = (order) => {
+    const workflow = ORDER_TYPE_WORKFLOWS[order.orderType] || ORDER_TYPE_WORKFLOWS.walkin;
+    const status = order.status || "topack";
+    const statusFlow = workflow.statusFlow;
+    const currentIndex = statusFlow.indexOf(status);
+    
+    if (currentIndex < statusFlow.length - 1) {
+      const nextStatus = statusFlow[currentIndex + 1];
+      
+      switch(nextStatus) {
+        case "packed":
+          return "Mark as Packed";
+        case "payment_confirmed":
+          return "Confirm Payment";
+        case "pickup_ready":
+          return "Ready for Pickup";
+        case "dispatched":
+          return "Dispatch Order";
+        case "delivered":
+          return "Mark as Delivered";
+        case "completed":
+          return "Complete Order";
+        default:
+          return "Next Step";
+      }
+    }
+    
+    // Default actions based on status
+    switch(status) {
+      case "completed":
+        return "View Details";
+      case "delivered":
+        return order.paymentTerms === "after" && parseFloat(order.amountPending || "0") > 0 
+          ? "Collect Payment" 
+          : "Complete Order";
+      case "payment_confirmed":
+        return "Complete Order";
+      default:
+        return "View Details";
+    }
+  }
+
+  // Transform API data to match our component format
+  const transformOrders = () => {
+    if (!data || !data.pages || data.pages.length === 0) return [];
+    
+    const allSales = data.pages.flatMap(page => page.sales || []);
+    
+    return allSales.map(sale => {
+      const workflowDetails = getWorkflowDetails(sale);
+      const paymentDetails = getPaymentDetails(sale);
+      const priority = getPriority(sale.createdAt);
+      
+      return {
+        id: sale.saleId || sale.id,
+        store: "La Luna Jewellery",
+        status: sale.status || "topack",
+        statusLabel: workflowDetails.statusLabel,
+        statusColor: workflowDetails.statusColor,
+        statusBg: workflowDetails.statusBg,
+        amount: `KES ${parseFloat(sale.totalAmount || "0").toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        time: getTimeAgo(sale.createdAt),
+        items: (sale.items || []).map(item => ({
+          name: item.label || "Item",
+          qty: item.quantity?.toString() || "1"
+        })),
+        shelf: "#" + (Math.floor(Math.random() * 200) + 1), // Generate random shelf for now
+        payment: paymentDetails.payment,
+        paymentId: paymentDetails.paymentId,
+        paymentStatus: paymentDetails.paymentStatus,
+        orderType: sale.orderType || "walkin",
+        action: getNextAction(sale),
+        priority: priority,
+        progress: Math.round((workflowDetails.currentStep / workflowDetails.totalSteps) * 100),
+        workflow: workflowDetails.workflow,
+        currentStep: workflowDetails.currentStep,
+        totalSteps: workflowDetails.totalSteps,
+        completed: sale.status === "completed",
+        saleData: sale // Keep original data for reference
+      };
+    });
+  }
+
+  const orders = transformOrders();
 
   const filterOrders = () => {
     let filtered = orders
@@ -475,34 +451,6 @@ export default function OrdersScreen() {
 
   const getWorkflowProgress = (order) => {
     return Math.round((order.currentStep / order.totalSteps) * 100)
-  }
-
-  const getNextAction = (order) => {
-    const workflow = ORDER_TYPE_WORKFLOWS[order.orderType]
-    const currentIndex = workflow.statusFlow.indexOf(order.status)
-    
-    if (currentIndex < workflow.statusFlow.length - 1) {
-      const nextStatus = workflow.statusFlow[currentIndex + 1]
-      const nextLabel = workflow.statusLabels[nextStatus]
-      
-      switch(nextStatus) {
-        case "payment_confirmed":
-          return "Confirm Payment"
-        case "packed":
-          return "Mark as Packed"
-        case "pickup_recorded":
-          return "Record Pickup"
-        case "dispatched":
-          return "Dispatch Order"
-        case "delivered":
-          return "Mark as Delivered"
-        case "completed":
-          return "Complete Order"
-        default:
-          return "Next Step"
-      }
-    }
-    return order.action
   }
 
   const renderFilterModal = () => (
@@ -1064,445 +1012,505 @@ export default function OrdersScreen() {
           </View>
         )}
 
+        {/* Loading State */}
+        {isFetching && (
+          <View style={{
+            alignItems: "center",
+            paddingVertical: 60,
+            paddingHorizontal: 40,
+          }}>
+            <Ionicons name="refresh-circle" size={80} color={COLORS.primary} />
+            <Text style={{
+              fontSize: 18,
+              fontWeight: "bold",
+              color: COLORS.text,
+              marginTop: 16,
+              marginBottom: 8,
+              fontFamily: "Montserrat-Bold",
+            }}>
+              Loading Orders...
+            </Text>
+          </View>
+        )}
+
+        {/* Error State */}
+        {isError && !isFetching && (
+          <View style={{
+            alignItems: "center",
+            paddingVertical: 60,
+            paddingHorizontal: 40,
+          }}>
+            <Ionicons name="alert-circle" size={80} color="#FF6B6B" />
+            <Text style={{
+              fontSize: 18,
+              fontWeight: "bold",
+              color: COLORS.text,
+              marginTop: 16,
+              marginBottom: 8,
+              fontFamily: "Montserrat-Bold",
+            }}>
+              Failed to load orders
+            </Text>
+            <Text style={{
+              fontSize: 14,
+              color: COLORS.textLight,
+              textAlign: "center",
+              fontFamily: "Montserrat-Regular",
+            }}>
+              Please check your connection and try again
+            </Text>
+          </View>
+        )}
+
         {/* Orders Grid */}
-        <View style={{
-          paddingHorizontal: 20,
-          gap: 12,
-        }}>
-          {filterOrders().map((order, index) => (
-            <Animated.View
-              key={order.id}
-              style={[
-                {
-                  shadowColor: "#000",
-                  shadowOffset: { width: 0, height: 8 },
-                  shadowOpacity: 0.08,
-                  shadowRadius: 16,
-                  elevation: 5,
-                },
-                {
-                  opacity: cardAnim,
-                  transform: [{
-                    translateY: cardAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [50 + index * 20, 0]
-                    })
-                  }]
-                }
-              ]}
-            >
-              <TouchableOpacity
-                style={{
-                  backgroundColor: COLORS.white,
-                  borderRadius: 20,
-                  overflow: "hidden",
-                }}
-                onPress={() => router.push("/components/orders/orderDetails")}
-                activeOpacity={0.9}
+        {!isFetching && !isError && (
+          <View style={{
+            paddingHorizontal: 20,
+            gap: 12,
+          }}>
+            {filterOrders().map((order, index) => (
+              <Animated.View
+                key={order.id}
+                style={[
+                  {
+                    shadowColor: "#000",
+                    shadowOffset: { width: 0, height: 8 },
+                    shadowOpacity: 0.08,
+                    shadowRadius: 16,
+                    elevation: 5,
+                  },
+                  {
+                    opacity: cardAnim,
+                    transform: [{
+                      translateY: cardAnim.interpolate({
+                        inputRange: [0, 1],
+                        outputRange: [50 + index * 20, 0]
+                      })
+                    }]
+                  }
+                ]}
               >
-                {/* Card Header */}
-                <View style={{
-                  padding: 16,
-                  paddingBottom: 12,
-                }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: COLORS.white,
+                    borderRadius: 20,
+                    overflow: "hidden",
+                  }}
+                  onPress={() => router.push({
+                    pathname: "/components/orders/orderDetails",
+                    params: { orderId: order.id, orderData: JSON.stringify(order.saleData) }
+                  })}
+                  activeOpacity={0.9}
+                >
+                  {/* Card Header */}
                   <View style={{
-                    flex: 1,
+                    padding: 16,
+                    paddingBottom: 12,
                   }}>
                     <View style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                      marginBottom: 4,
+                      flex: 1,
                     }}>
-                      <Ionicons name={order.workflow.icon} size={20} color={COLORS.primary} />
-                      <Text style={{
-                        fontSize: 20,
-                        fontWeight: "bold",
-                        color: COLORS.text,
-                        fontFamily: "Montserrat-Bold",
-                      }}>{order.id}</Text>
-                      <View style={[
-                        {
-                          paddingHorizontal: 8,
-                          paddingVertical: 2,
-                          borderRadius: 4,
-                        },
-                        { 
-                          backgroundColor: 
-                            order.priority === "High" ? "#FF6B6B20" :
-                            order.priority === "Medium" ? "#FF980020" : "#4CAF5020"
-                        }
-                      ]}>
-                        <Text style={[
+                      <View style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
+                        marginBottom: 4,
+                      }}>
+                        <Ionicons name={order.workflow.icon} size={20} color={COLORS.primary} />
+                        <Text style={{
+                          fontSize: 20,
+                          fontWeight: "bold",
+                          color: COLORS.text,
+                          fontFamily: "Montserrat-Bold",
+                        }}>{order.id}</Text>
+                        <View style={[
                           {
-                            fontSize: 10,
-                            fontWeight: "bold",
-                            fontFamily: "Montserrat-Bold",
+                            paddingHorizontal: 8,
+                            paddingVertical: 2,
+                            borderRadius: 4,
                           },
                           { 
-                            color: 
-                              order.priority === "High" ? "#FF6B6B" :
-                              order.priority === "Medium" ? "#FF9800" : "#4CAF50"
+                            backgroundColor: 
+                              order.priority === "High" ? "#FF6B6B20" :
+                              order.priority === "Medium" ? "#FF980020" : "#4CAF5020"
                           }
                         ]}>
-                          {order.priority}
-                        </Text>
-                      </View>
-                    </View>
-                    <Text style={{
-                      fontSize: 16,
-                      color: COLORS.text,
-                      fontFamily: "Montserrat-ExtraLight",
-                      marginBottom: 6,
-                    }}>{order.store}</Text>
-                    <View style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 8,
-                    }}>
-                      <Text style={{
-                        fontSize: 13,
-                        color: COLORS.primary,
-                        fontWeight: "600",
-                        fontFamily: "Montserrat-SemiBold",
-                      }}>{order.workflow.label}</Text>
-                      <Text style={{
-                        fontSize: 13,
-                        color: COLORS.textLight,
-                        fontFamily: "Montserrat-ExtraLight",
-                      }}>{order.workflow.description}</Text>
-                    </View>
-                  </View>
-                  
-                  <View style={[{
-                    position: "absolute",
-                    top: 16,
-                    right: 16,
-                    flexDirection: "row",
-                    alignItems: "center",
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 12,
-                    gap: 6,
-                  }, { backgroundColor: order.statusBg }]}>
-                    <View style={[{
-                      width: 8,
-                      height: 8,
-                      borderRadius: 4,
-                    }, { backgroundColor: order.statusColor }]} />
-                    <Text style={[{
-                      fontSize: 14,
-                      fontWeight: "600",
-                      fontFamily: "Montserrat-ExtraLight",
-                    }, { color: order.statusColor }]}>
-                      {order.statusLabel}
-                    </Text>
-                  </View>
-                </View>
-
-                {/* Order Workflow Progress */}
-                <View style={{
-                  paddingHorizontal: 16,
-                  paddingBottom: 12,
-                }}>
-                  <View style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 8,
-                  }}>
-                    <Text style={{
-                      fontSize: 14,
-                      color: COLORS.textLight,
-                      fontFamily: "Montserrat-ExtraLight",
-                    }}>
-                      Step {order.currentStep + 1} of {order.totalSteps + 1}
-                    </Text>
-                    <Text style={{
-                      fontSize: 14,
-                      color: COLORS.text,
-                      fontWeight: "600",
-                      fontFamily: "Montserrat-SemiBold",
-                    }}>
-                      {getWorkflowProgress(order)}%
-                    </Text>
-                  </View>
-                  <View style={{
-                    height: 4,
-                    backgroundColor: "#f0f0f0",
-                    borderRadius: 2,
-                    overflow: "hidden",
-                    marginBottom: 12,
-                  }}>
-                    <View 
-                      style={[
-                        {
-                          height: "100%",
-                          borderRadius: 2,
-                        },
-                        { 
-                          width: `${getWorkflowProgress(order)}%`,
-                          backgroundColor: order.statusColor
-                        }
-                      ]} 
-                    />
-                  </View>
-                  
-                  {/* Workflow Steps */}
-                  <View style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    marginBottom: 4,
-                  }}>
-                    {order.workflow.statusFlow.map((status, index) => {
-                      const isCompleted = order.workflow.statusFlow.indexOf(order.status) >= index
-                      const isCurrent = order.status === status
-                      return (
-                        <View key={status} style={{
-                          flexDirection: "row",
-                          justifyContent: "space-between",
-                          alignItems: "center",
-                          marginBottom: 4,
-                        }}>
-                          <View style={[
+                          <Text style={[
                             {
-                              width: 16,
-                              height: 16,
-                              borderRadius: 8,
-                              backgroundColor: "#E0E0E0",
-                              justifyContent: "center",
-                              alignItems: "center",
-                              zIndex: 2,
+                              fontSize: 10,
+                              fontWeight: "bold",
+                              fontFamily: "Montserrat-Bold",
                             },
-                            isCompleted && { backgroundColor: order.workflow.statusColors[status] },
-                            isCurrent && {
-                              borderWidth: 2,
-                              borderColor: "#fff",
-                              shadowColor: "#000",
-                              shadowOffset: { width: 0, height: 2 },
-                              shadowOpacity: 0.1,
-                              shadowRadius: 4,
-                              elevation: 3,
+                            { 
+                              color: 
+                                order.priority === "High" ? "#FF6B6B" :
+                                order.priority === "Medium" ? "#FF9800" : "#4CAF50"
                             }
                           ]}>
-                            {isCompleted && (
-                              <Ionicons name="checkmark" size={10} color="#fff" />
-                            )}
-                          </View>
-                          {index < order.workflow.statusFlow.length - 1 && (
-                            <View style={[
-                              {
-                                flex: 1,
-                                height: 2,
-                                backgroundColor: "#E0E0E0",
-                                marginHorizontal: -1,
-                              },
-                              isCompleted && { backgroundColor: order.workflow.statusColors[status] }
-                            ]} />
-                          )}
+                            {order.priority}
+                          </Text>
                         </View>
-                      )
-                    })}
-                  </View>
-                  
-                  <View style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                  }}>
-                    {order.workflow.statusFlow.map((status, index) => (
-                      <Text 
-                        key={status} 
-                        style={[
-                          {
-                            fontSize: 12,
-                            color: COLORS.textLight,
-                            fontFamily: "Montserrat-ExtraLight",
-                            flex: 1,
-                            textAlign: "center",
-                            paddingHorizontal: 2,
-                          },
-                          order.status === status && { color: order.workflow.statusColors[status], fontWeight: 'bold' }
-                        ]}
-                        numberOfLines={1}
-                      >
-                        {order.workflow.statusLabels[status]}
-                      </Text>
-                    ))}
-                  </View>
-                </View>
-
-                {/* Order Details */}
-                <View style={{
-                  paddingHorizontal: 16,
-                  paddingBottom: 16,
-                }}>
-                  <View style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    marginBottom: 12,
-                  }}>
-                    <View style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}>
-                      <Ionicons name="cash" size={18} color={COLORS.textLight} />
-                      <Text style={{
-                        fontSize: 15,
-                        color: COLORS.text,
-                        fontWeight: "500",
-                        fontFamily: "Montserrat-SemiBold",
-                      }}>{order.amount}</Text>
-                    </View>
-                    <View style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}>
-                      <Ionicons name="time" size={18} color={COLORS.textLight} />
-                      <Text style={{
-                        fontSize: 15,
-                        color: COLORS.text,
-                        fontWeight: "500",
-                        fontFamily: "Montserrat-ExtraLight",
-                      }}>{order.time}</Text>
-                    </View>
-                    <View style={{
-                      flexDirection: "row",
-                      alignItems: "center",
-                      gap: 6,
-                    }}>
-                      <Ionicons name="location" size={18} color={COLORS.textLight} />
-                      <Text style={{
-                        fontSize: 15,
-                        color: COLORS.text,
-                        fontWeight: "500",
-                        fontFamily: "Montserrat-SemiBold",
-                      }}>{order.shelf}</Text>
-                    </View>
-                  </View>
-                  
-                  <View style={{
-                    flexDirection: "row",
-                    alignItems: "center",
-                    gap: 6,
-                    marginBottom: 12,
-                    paddingVertical: 8,
-                    paddingHorizontal: 12,
-                    backgroundColor: "#f5f5f5",
-                    borderRadius: 8,
-                    alignSelf: "flex-start",
-                  }}>
-                    <Ionicons 
-                      name={
-                        order.paymentStatus === "confirmed" ? "checkmark-circle" :
-                        order.paymentStatus === "deposit_paid" ? "time" :
-                        order.paymentStatus === "balance_due" ? "alert-circle" : "close-circle"
-                      } 
-                      size={16} 
-                      color={
-                        order.paymentStatus === "confirmed" ? "#4CAF50" :
-                        order.paymentStatus === "deposit_paid" ? "#FF9800" :
-                        order.paymentStatus === "balance_due" ? "#F44336" : "#9E9E9E"
-                      } 
-                    />
-                    <Text style={{
-                      fontSize: 14,
-                      color: COLORS.text,
-                      fontFamily: "Montserrat-ExtraLight",
-                      fontWeight: 600,
-                    }}>{order.payment}</Text>
-                  </View>
-                  
-                  {/* Items Preview */}
-                  <View style={{
-                    flexDirection: "row",
-                    flexWrap: "wrap",
-                    gap: 8,
-                  }}>
-                    {order.items.slice(0, 2).map((item, idx) => (
-                      <View key={idx} style={{
-                        backgroundColor: "#f5f5f5",
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 12,
-                      }}>
-                        <Text style={{
-                          fontSize: 13,
-                          color: COLORS.text,
-                          fontFamily: "Montserrat-ExtraLight",
-                        }}>
-                          {item.name} ×{item.qty}
-                        </Text>
                       </View>
-                    ))}
-                    {order.items.length > 2 && (
+                      <Text style={{
+                        fontSize: 16,
+                        color: COLORS.text,
+                        fontFamily: "Montserrat-ExtraLight",
+                        marginBottom: 6,
+                      }}>{order.store}</Text>
                       <View style={{
-                        backgroundColor: "rgba(201, 70, 238, 0.1)",
-                        paddingHorizontal: 10,
-                        paddingVertical: 6,
-                        borderRadius: 12,
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 8,
                       }}>
                         <Text style={{
                           fontSize: 13,
                           color: COLORS.primary,
                           fontWeight: "600",
                           fontFamily: "Montserrat-SemiBold",
-                        }}>
-                          +{order.items.length - 2} more
-                        </Text>
+                        }}>{order.workflow.label}</Text>
+                        <Text style={{
+                          fontSize: 13,
+                          color: COLORS.textLight,
+                          fontFamily: "Montserrat-ExtraLight",
+                        }}>{order.workflow.description}</Text>
                       </View>
-                    )}
-                  </View>
-                </View>
-
-                {/* Action Footer */}
-                <LinearGradient
-                  colors={["rgba(249, 249, 249, 0.8)", "rgba(249, 249, 249, 1)"]}
-                  style={{
-                    flexDirection: "row",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    padding: 16,
-                    borderTopWidth: 1,
-                    borderTopColor: "#f0f0f0",
-                  }}
-                >
-                  <View style={{
-                    flex: 1,
-                    alignItems: "flex-end",
-                  }}>
-                    <TouchableOpacity 
-                      style={[{
-                        flexDirection: "row",
-                        alignItems: "center",
-                        paddingHorizontal: 16,
-                        paddingVertical: 10,
-                        borderRadius: 12,
-                        gap: 8,
-                        minWidth: 120,
-                        justifyContent: "center",
-                      }, { backgroundColor: order.statusColor }]}
-                      activeOpacity={0.8}
-                    >
-                      <Text style={{
-                        color: COLORS.white,
-                        fontSize: 15,
+                    </View>
+                    
+                    <View style={[{
+                      position: "absolute",
+                      top: 16,
+                      right: 16,
+                      flexDirection: "row",
+                      alignItems: "center",
+                      paddingHorizontal: 10,
+                      paddingVertical: 6,
+                      borderRadius: 12,
+                      gap: 6,
+                    }, { backgroundColor: order.statusBg }]}>
+                      <View style={[{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 4,
+                      }, { backgroundColor: order.statusColor }]} />
+                      <Text style={[{
+                        fontSize: 14,
                         fontWeight: "600",
                         fontFamily: "Montserrat-ExtraLight",
-                      }}>{getNextAction(order)}</Text>
-                      <Ionicons name="arrow-forward" size={16} color={COLORS.white} />
-                    </TouchableOpacity>
+                      }, { color: order.statusColor }]}>
+                        {order.statusLabel}
+                      </Text>
+                    </View>
                   </View>
-                </LinearGradient>
-              </TouchableOpacity>
-            </Animated.View>
-          ))}
-        </View>
+
+                  {/* Order Workflow Progress */}
+                  <View style={{
+                    paddingHorizontal: 16,
+                    paddingBottom: 12,
+                  }}>
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 8,
+                    }}>
+                      <Text style={{
+                        fontSize: 14,
+                        color: COLORS.textLight,
+                        fontFamily: "Montserrat-ExtraLight",
+                      }}>
+                        Step {order.currentStep + 1} of {order.totalSteps + 1}
+                      </Text>
+                      <Text style={{
+                        fontSize: 14,
+                        color: COLORS.text,
+                        fontWeight: "600",
+                        fontFamily: "Montserrat-SemiBold",
+                      }}>
+                        {getWorkflowProgress(order)}%
+                      </Text>
+                    </View>
+                    <View style={{
+                      height: 4,
+                      backgroundColor: "#f0f0f0",
+                      borderRadius: 2,
+                      overflow: "hidden",
+                      marginBottom: 12,
+                    }}>
+                      <View 
+                        style={[
+                          {
+                            height: "100%",
+                            borderRadius: 2,
+                          },
+                          { 
+                            width: `${getWorkflowProgress(order)}%`,
+                            backgroundColor: order.statusColor
+                          }
+                        ]} 
+                      />
+                    </View>
+                    
+                    {/* Workflow Steps */}
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      marginBottom: 4,
+                    }}>
+                      {order.workflow.statusFlow.map((status, index) => {
+                        const isCompleted = order.workflow.statusFlow.indexOf(order.status) >= index
+                        const isCurrent = order.status === status
+                        return (
+                          <View key={status} style={{
+                            flexDirection: "row",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            marginBottom: 4,
+                          }}>
+                            <View style={[
+                              {
+                                width: 16,
+                                height: 16,
+                                borderRadius: 8,
+                                backgroundColor: "#E0E0E0",
+                                justifyContent: "center",
+                                alignItems: "center",
+                                zIndex: 2,
+                              },
+                              isCompleted && { backgroundColor: order.workflow.statusColors[status] },
+                              isCurrent && {
+                                borderWidth: 2,
+                                borderColor: "#fff",
+                                shadowColor: "#000",
+                                shadowOffset: { width: 0, height: 2 },
+                                shadowOpacity: 0.1,
+                                shadowRadius: 4,
+                                elevation: 3,
+                              }
+                            ]}>
+                              {isCompleted && (
+                                <Ionicons name="checkmark" size={10} color="#fff" />
+                              )}
+                            </View>
+                            {index < order.workflow.statusFlow.length - 1 && (
+                              <View style={[
+                                {
+                                  flex: 1,
+                                  height: 2,
+                                  backgroundColor: "#E0E0E0",
+                                  marginHorizontal: -1,
+                                },
+                                isCompleted && { backgroundColor: order.workflow.statusColors[status] }
+                              ]} />
+                            )}
+                          </View>
+                        )
+                      })}
+                    </View>
+                    
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                    }}>
+                      {order.workflow.statusFlow.map((status, index) => (
+                        <Text 
+                          key={status} 
+                          style={[
+                            {
+                              fontSize: 12,
+                              color: COLORS.textLight,
+                              fontFamily: "Montserrat-ExtraLight",
+                              flex: 1,
+                              textAlign: "center",
+                              paddingHorizontal: 2,
+                            },
+                            order.status === status && { color: order.workflow.statusColors[status], fontWeight: 'bold' }
+                          ]}
+                          numberOfLines={1}
+                        >
+                          {order.workflow.statusLabels[status]}
+                        </Text>
+                      ))}
+                    </View>
+                  </View>
+
+                  {/* Order Details */}
+                  <View style={{
+                    paddingHorizontal: 16,
+                    paddingBottom: 16,
+                  }}>
+                    <View style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      marginBottom: 12,
+                    }}>
+                      <View style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}>
+                        <Ionicons name="cash" size={18} color={COLORS.textLight} />
+                        <Text style={{
+                          fontSize: 15,
+                          color: COLORS.text,
+                          fontWeight: "500",
+                          fontFamily: "Montserrat-SemiBold",
+                        }}>{order.amount}</Text>
+                      </View>
+                      <View style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}>
+                        <Ionicons name="time" size={18} color={COLORS.textLight} />
+                        <Text style={{
+                          fontSize: 15,
+                          color: COLORS.text,
+                          fontWeight: "500",
+                          fontFamily: "Montserrat-ExtraLight",
+                        }}>{order.time}</Text>
+                      </View>
+                      <View style={{
+                        flexDirection: "row",
+                        alignItems: "center",
+                        gap: 6,
+                      }}>
+                        <Ionicons name="location" size={18} color={COLORS.textLight} />
+                        <Text style={{
+                          fontSize: 15,
+                          color: COLORS.text,
+                          fontWeight: "500",
+                          fontFamily: "Montserrat-SemiBold",
+                        }}>{order.shelf}</Text>
+                      </View>
+                    </View>
+                    
+                    <View style={{
+                      flexDirection: "row",
+                      alignItems: "center",
+                      gap: 6,
+                      marginBottom: 12,
+                      paddingVertical: 8,
+                      paddingHorizontal: 12,
+                      backgroundColor: "#f5f5f5",
+                      borderRadius: 8,
+                      alignSelf: "flex-start",
+                    }}>
+                      <Ionicons 
+                        name={
+                          order.paymentStatus === "confirmed" ? "checkmark-circle" :
+                          order.paymentStatus === "deposit_paid" ? "time" :
+                          order.paymentStatus === "balance_due" ? "alert-circle" : "close-circle"
+                        } 
+                        size={16} 
+                        color={
+                          order.paymentStatus === "confirmed" ? "#4CAF50" :
+                          order.paymentStatus === "deposit_paid" ? "#FF9800" :
+                          order.paymentStatus === "balance_due" ? "#F44336" : "#9E9E9E"
+                        } 
+                      />
+                      <Text style={{
+                        fontSize: 14,
+                        color: COLORS.text,
+                        fontFamily: "Montserrat-ExtraLight",
+                        fontWeight: 600,
+                      }}>{order.payment}</Text>
+                    </View>
+                    
+                    {/* Items Preview */}
+                    <View style={{
+                      flexDirection: "row",
+                      flexWrap: "wrap",
+                      gap: 8,
+                    }}>
+                      {order.items.slice(0, 2).map((item, idx) => (
+                        <View key={idx} style={{
+                          backgroundColor: "#f5f5f5",
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 12,
+                        }}>
+                          <Text style={{
+                            fontSize: 13,
+                            color: COLORS.text,
+                            fontFamily: "Montserrat-ExtraLight",
+                          }}>
+                            {item.name} ×{item.qty}
+                          </Text>
+                        </View>
+                      ))}
+                      {order.items.length > 2 && (
+                        <View style={{
+                          backgroundColor: "rgba(201, 70, 238, 0.1)",
+                          paddingHorizontal: 10,
+                          paddingVertical: 6,
+                          borderRadius: 12,
+                        }}>
+                          <Text style={{
+                            fontSize: 13,
+                            color: COLORS.primary,
+                            fontWeight: "600",
+                            fontFamily: "Montserrat-SemiBold",
+                          }}>
+                            +{order.items.length - 2} more
+                          </Text>
+                        </View>
+                      )}
+                    </View>
+                  </View>
+
+                  {/* Action Footer */}
+                  <LinearGradient
+                    colors={["rgba(249, 249, 249, 0.8)", "rgba(249, 249, 249, 1)"]}
+                    style={{
+                      flexDirection: "row",
+                      justifyContent: "space-between",
+                      alignItems: "center",
+                      padding: 16,
+                      borderTopWidth: 1,
+                      borderTopColor: "#f0f0f0",
+                    }}
+                  >
+                    <View style={{
+                      flex: 1,
+                      alignItems: "flex-end",
+                    }}>
+                      <TouchableOpacity 
+                        style={[{
+                          flexDirection: "row",
+                          alignItems: "center",
+                          paddingHorizontal: 16,
+                          paddingVertical: 10,
+                          borderRadius: 12,
+                          gap: 8,
+                          minWidth: 120,
+                          justifyContent: "center",
+                        }, { backgroundColor: order.statusColor }]}
+                        activeOpacity={0.8}
+                        onPress={() => {
+                          // Handle action based on order status
+                          console.log(`Action for ${order.id}: ${order.action}`);
+                          // You can implement navigation or API calls here
+                        }}
+                      >
+                        <Text style={{
+                          color: COLORS.white,
+                          fontSize: 15,
+                          fontWeight: "600",
+                          fontFamily: "Montserrat-ExtraLight",
+                        }}>{order.action}</Text>
+                        <Ionicons name="arrow-forward" size={16} color={COLORS.white} />
+                      </TouchableOpacity>
+                    </View>
+                  </LinearGradient>
+                </TouchableOpacity>
+              </Animated.View>
+            ))}
+          </View>
+        )}
 
         {/* Empty State */}
-        {filterOrders().length === 0 && (
+        {!isFetching && !isError && filterOrders().length === 0 && (
           <View style={{
             alignItems: "center",
             paddingVertical: 60,

@@ -255,7 +255,7 @@ export default function UpdateOrderModal({ visible, onClose, onSelectOrder }: Up
   const [statusFilter, setStatusFilter] = useState<'all' | Order['status']>('all');
 
   useEffect(() => {
-    let filtered = allOrders;
+    let filtered = allOrders ?? [];
     
     // Apply search filter
     if (searchQuery.trim() !== '') {

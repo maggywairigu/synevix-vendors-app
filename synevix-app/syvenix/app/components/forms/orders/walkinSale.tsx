@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import {
   View,
   Text,
@@ -10,56 +10,76 @@ import {
   Alert,
   StyleSheet,
   Image,
+  ActivityIndicator,
+  Dimensions,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useRouter } from 'expo-router';
 import { Picker } from '@react-native-picker/picker';
-import { Ionicons, MaterialIcons, FontAwesome, Feather } from '@expo/vector-icons';
+import { Ionicons, MaterialIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { COLORS } from '@/constants/Colors';
+import { useGetItems } from '@/queries/productQueries';
+import { useGetAllCollections, useGetCollection } from '@/queries/collectionQueries';
+import { useGetAllAccounts } from '@/queries/accountsQueries';
+import { createSale } from '@/apis/sales/createNewSale';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import convertCloudinaryUrlToPng from '@/app/utils/normalizeImages';
+import InfiniteScrollView from '../../ui/InfiniteScrollView';
 
-// Dummy data for shelves/shops
+const { width } = Dimensions.get('window');
+
+// Types
+interface TProduct {
+  sku: string;
+  label: string;
+  name: string;
+  market_price: number;
+  images: string[];
+  variants?: Array<{
+    sku: string;
+    label: string;
+    images: string[];
+    attributes?: Record<string, string>;
+    stock?: number;
+  }>;
+}
+
+interface TCollection {
+  id: string;
+  name: string;
+  description: string;
+  items: any[];
+  status: string;
+  finalPrice: number;
+  subtotal: number;
+  discount: number;
+}
+
+interface TAccount {
+  id: string;
+  name: string;
+  type: string;
+  bankName?: string;
+  accountNumber?: string;
+  currency: string;
+  isPrimary: boolean;
+}
+
+// Dummy data for shelves/shops (temporary until API)
 const SHELVES_DATA = [
-  { id: '1', name: 'Main Warehouse', location: 'Floor 1, Section A', itemsCount: 245 },
-  { id: '2', name: 'Downtown Store', location: '123 Main Street', itemsCount: 120 },
-  { id: '3', name: 'Mall Branch', location: 'Westgate Mall', itemsCount: 89 },
-  { id: '4', name: 'Express Shop', location: 'Airport Road', itemsCount: 65 },
-  { id: '5', name: 'Online Warehouse', location: 'Virtual', itemsCount: 312 },
-];
-
-// Dummy data for products
-const PRODUCTS_DATA = [
-  { id: '1', sku: 'SKU001', name: 'iPhone 15 Pro', price: 1299.99, stock: 15, shelfId: '1', image: 'https://via.placeholder.com/150' },
-  { id: '2', sku: 'SKU002', name: 'Samsung Galaxy S24', price: 1099.99, stock: 8, shelfId: '1', image: 'https://via.placeholder.com/150' },
-  { id: '3', sku: 'SKU003', name: 'MacBook Pro 16"', price: 2499.99, stock: 5, shelfId: '2', image: 'https://via.placeholder.com/150' },
-  { id: '4', sku: 'SKU004', name: 'iPad Air', price: 599.99, stock: 22, shelfId: '2', image: 'https://via.placeholder.com/150' },
-  { id: '5', sku: 'SKU005', name: 'Sony Headphones', price: 299.99, stock: 30, shelfId: '3', image: 'https://via.placeholder.com/150' },
-  { id: '6', sku: 'SKU006', name: 'Apple Watch Series 9', price: 399.99, stock: 18, shelfId: '4', image: 'https://via.placeholder.com/150' },
-];
-
-// Dummy data for collections
-const COLLECTIONS_DATA = [
-  { id: '1', name: 'Starter Office Kit', description: 'Basic office setup', itemsCount: 4, discount: 10, price: 1999.99 },
-  { id: '2', name: 'Gaming Bundle', description: 'Complete gaming setup', itemsCount: 5, discount: 15, price: 2999.99 },
-  { id: '3', name: 'Home Office Pro', description: 'Professional home office', itemsCount: 6, discount: 12, price: 3499.99 },
-];
-
-// Dummy data for payment accounts
-const PAYMENT_ACCOUNTS = [
-  { id: '1', name: 'M-Pesa', type: 'mobile', accountNumber: '0712345678', isPrimary: true },
-  { id: '2', name: 'Bank - KCB', type: 'bank', accountNumber: '1234567890', isPrimary: false },
-  { id: '3', name: 'Cash', type: 'cash', accountNumber: '', isPrimary: false },
-  { id: '4', name: 'Credit Card', type: 'card', accountNumber: '**** **** **** 1234', isPrimary: false },
+  { id: '1', name: 'Main Shop', location: 'Headquarters', itemsCount: 245 },
 ];
 
 const AddNewOrder = () => {
   const router = useRouter();
+  const queryClient = useQueryClient();
   
   // State variables
-  const [selectedShelf, setSelectedShelf] = useState(null);
+  const [selectedShelf, setSelectedShelf] = useState(SHELVES_DATA[0]);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedItems, setSelectedItems] = useState([]);
-  const [selectedCollections, setSelectedCollections] = useState([]);
+  const [selectedItems, setSelectedItems] = useState<any[]>([]);
+  const [selectedCollections, setSelectedCollections] = useState<string[]>([]);
   const [orderType, setOrderType] = useState('walkin');
   const [deliveryFee, setDeliveryFee] = useState('');
   const [errandFee, setErrandFee] = useState('');
@@ -75,55 +95,226 @@ const AddNewOrder = () => {
   const [showShelfModal, setShowShelfModal] = useState(false);
   const [showCollectionModal, setShowCollectionModal] = useState(false);
   const [showVariantModal, setShowVariantModal] = useState(false);
-  const [selectedCollection, setSelectedCollection] = useState(null);
-  const [collectionItems, setCollectionItems] = useState([]);
-  const [selectedVariants, setSelectedVariants] = useState({});
+  const [selectedCollection, setSelectedCollection] = useState<TCollection | null>(null);
+  const [selectedVariants, setSelectedVariants] = useState<Record<string, any>>({});
   const [collectionDiscount, setCollectionDiscount] = useState(0);
   const [payments, setPayments] = useState([{ amount: '', method: '', transactionCode: '' }]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [activeTab, setActiveTab] = useState<'products' | 'collections'>('products');
+  const [refreshing, setRefreshing] = useState(false);
   
-  // Filtered products based on selected shelf and search
-  const filteredProducts = useMemo(() => {
-    let products = PRODUCTS_DATA;
-    
-    // Filter by shelf if selected
-    if (selectedShelf) {
-      products = products.filter(product => product.shelfId === selectedShelf.id);
-    }
-    
-    // Filter by search query
-    if (searchQuery) {
-      const query = searchQuery.toLowerCase();
-      products = products.filter(product => 
-        product.name.toLowerCase().includes(query) ||
-        product.sku.toLowerCase().includes(query)
-      );
-    }
-    
-    return products;
-  }, [selectedShelf, searchQuery]);
+  // API Queries
+  const pageLimit = 10;
   
-  // Filtered collections
-  const filteredCollections = useMemo(() => {
-    return COLLECTIONS_DATA.filter(collection =>
-      collection.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      collection.description.toLowerCase().includes(searchQuery.toLowerCase())
+  // Products query
+  const {
+    data: productsData,
+    isFetching: isFetchingProducts,
+    fetchNextPage: fetchNextProductsPage,
+    hasNextPage: hasNextProductsPage,
+    isFetchingNextPage: isFetchingNextProductsPage,
+    refetch: refetchProducts,
+  } = useGetItems({
+    searchText: searchQuery,
+    pageLimit
+  });
+
+  const allProducts = useMemo(() => {
+    return productsData?.pages.flatMap((page: any) => page.items) ?? [];
+  }, [productsData]);
+
+  // Collections query
+  const {
+    data: collectionsData,
+    isFetching: isFetchingCollections,
+    fetchNextPage: fetchNextCollectionsPage,
+    hasNextPage: hasNextCollectionsPage,
+    isFetchingNextPage: isFetchingNextCollectionsPage,
+    refetch: refetchCollections,
+  } = useGetAllCollections({ searchText: searchQuery, pageLimit });
+
+  const allCollections = useMemo(() => {
+    return collectionsData?.pages.flatMap((page: any) => page.collections) ?? [];
+  }, [collectionsData]);
+
+  // Handle refresh
+  const onRefresh = useCallback(async () => {
+    setRefreshing(true);
+    try {
+      if (activeTab === 'products') {
+        await refetchProducts();
+      } else {
+        await refetchCollections();
+      }
+    } finally {
+      setRefreshing(false);
+    }
+  }, [activeTab, refetchProducts, refetchCollections]);
+
+  // Handle load more products
+  const loadMoreProducts = useCallback(() => {
+    if (!isFetchingNextProductsPage && hasNextProductsPage && !isFetchingProducts) {
+      fetchNextProductsPage();
+    }
+  }, [isFetchingNextProductsPage, hasNextProductsPage, isFetchingProducts, fetchNextProductsPage]);
+
+  // Handle load more collections
+  const loadMoreCollections = useCallback(() => {
+    if (!isFetchingNextCollectionsPage && hasNextCollectionsPage && !isFetchingCollections) {
+      fetchNextCollectionsPage();
+    }
+  }, [isFetchingNextCollectionsPage, hasNextCollectionsPage, isFetchingCollections, fetchNextCollectionsPage]);
+
+  // Render product item
+  const renderProductItem = useCallback(({ item }: { item: TProduct }) => {
+    const fixedUrl = convertCloudinaryUrlToPng(item.images[0]);
+
+    return (
+      <View style={styles.productCardWrapper}>
+        <TouchableOpacity
+          style={styles.productCard}
+          onPress={() => handleAddItem(item)}
+        >
+          <Image
+            source={{ uri: fixedUrl }}
+            style={styles.productCardImage}
+          />
+          <View style={styles.productCardContent}>
+            <Text style={styles.productCardName} numberOfLines={1}>
+              {item.label || item.name}
+            </Text>
+            <Text style={styles.productCardSku} numberOfLines={1}>{item.sku}</Text>
+            <Text style={styles.productCardPrice}>
+              KES {parseFloat(item.market_price?.toString() || '0').toFixed(2)}
+            </Text>
+          </View>
+          <TouchableOpacity 
+            style={styles.productCardAddButton}
+            onPress={() => handleAddItem(item)}
+          >
+            <Ionicons name="add" size={20} color="#FFFFFF" />
+          </TouchableOpacity>
+        </TouchableOpacity>
+      </View>
     );
-  }, [searchQuery]);
-  
+  }, []);
+
+  // Render collection item
+  const renderCollectionItem = useCallback(({ item }: { item: TCollection }) => {
+    return (
+      <TouchableOpacity
+        style={styles.collectionCard}
+        onPress={() => handleSelectCollection(item)}
+      >
+        <View style={styles.collectionCardHeader}>
+          <View style={styles.collectionCardIcon}>
+            <Ionicons name="grid-outline" size={20} color="#FFFFFF" />
+            <Text style={styles.collectionCardIconText}>{item.items?.length || 0}</Text>
+          </View>
+          <View style={styles.collectionCardTitleContainer}>
+            <Text style={styles.collectionCardName} numberOfLines={1}>{item.name}</Text>
+            {item.discount > 0 && (
+              <View style={styles.collectionDiscountTag}>
+                <Text style={styles.collectionDiscountTagText}>{item.discount}% OFF</Text>
+              </View>
+            )}
+          </View>
+        </View>
+        <Text style={styles.collectionCardDescription} numberOfLines={2}>
+          {item.description}
+        </Text>
+        <View style={styles.collectionCardFooter}>
+          <Text style={styles.collectionCardPrice}>
+            KES {item.finalPrice?.toFixed(2)}
+          </Text>
+          <View style={styles.collectionCardBadge}>
+            <Text style={styles.collectionCardBadgeText}>Collection</Text>
+          </View>
+        </View>
+      </TouchableOpacity>
+    );
+  }, []);
+
+  // Empty component for products
+  const renderProductsEmpty = useCallback(() => (
+    <View style={styles.emptyList}>
+      <Ionicons name="cube-outline" size={48} color="#9CA3AF" />
+      <Text style={styles.emptyListText}>No products found</Text>
+      <Text style={styles.emptyListSubtext}>
+        {searchQuery ? 'Try a different search term' : 'Start by adding products'}
+      </Text>
+    </View>
+  ), [searchQuery]);
+
+  // Empty component for collections
+  const renderCollectionsEmpty = useCallback(() => (
+    <View style={styles.emptyList}>
+      <Ionicons name="grid-outline" size={48} color="#9CA3AF" />
+      <Text style={styles.emptyListText}>No collections found</Text>
+      <Text style={styles.emptyListSubtext}>
+        {searchQuery ? 'Try a different search term' : 'Start by creating collections'}
+      </Text>
+    </View>
+  ), [searchQuery]);
+
+  // Accounts query
+  const {
+    data: accountsData,
+    isFetching: isFetchingAccounts,
+    fetchNextPage: fetchNextAccountsPage,
+    hasNextPage: hasNextAccountsPage,
+    isFetchingNextPage: isFetchingNextAccountsPage,
+  } = useGetAllAccounts({ searchText: '', pageLimit, filters: { status: "" } });
+
+  const allAccounts = useMemo(() => {
+    return accountsData?.pages.flatMap((page: any) => page.accounts) ?? [];
+  }, [accountsData]);
+
+  // Selected collection query
+  const { data: selectedCollectionData } = useGetCollection(
+    selectedCollection?.id ?? "",
+    {
+      enabled: !!selectedCollection?.id,
+      initialPageParam: undefined
+    }
+  );
+
+  // Create sale mutation
+  const mutation = useMutation({
+    mutationFn: async (saleDetails: any) => {
+      return await createSale(saleDetails);
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({
+        queryKey: ["get-sales", "", pageLimit],
+      });
+    },
+    onError: (error: any) => {
+      Alert.alert('Error', error?.response?.data?.message || "Failed to create sale. Please try again.");
+    }
+  });
+
   // Calculate totals
   const calculateTotals = useMemo(() => {
     let itemsTotal = 0;
     let totalQuantity = 0;
     
     selectedItems.forEach(item => {
-      const quantity = parseInt(item.quantity) || 1;
-      const price = parseFloat(item.price) || 0;
-      const discount = parseFloat(item.discount) || 0;
-      const discountedPrice = price - (price * (discount / 100));
-      
-      itemsTotal += discountedPrice * quantity;
-      totalQuantity += quantity;
+      if (item.isCollection) {
+        // Collection items
+        const price = parseFloat(item.finalPrice) || 0;
+        itemsTotal += price * (item.quantity || 1);
+        totalQuantity += item.quantity || 1;
+      } else {
+        // Regular items
+        const quantity = parseInt(item.quantity) || 1;
+        const price = parseFloat(item.market_price) || 0;
+        const discount = parseFloat(item.discount) || 0;
+        const discountedPrice = price - (price * (discount / 100));
+        
+        itemsTotal += discountedPrice * quantity;
+        totalQuantity += quantity;
+      }
     });
     
     const deliveryFeeNum = parseFloat(deliveryFee) || 0;
@@ -146,20 +337,39 @@ const AddNewOrder = () => {
       pendingAmount,
     };
   }, [selectedItems, deliveryFee, errandFee, payments]);
-  
+
+  // Initialize variants when collection data is loaded
+  useEffect(() => {
+    if (selectedCollectionData && showVariantModal) {
+      const initialVariants: Record<string, any> = {};
+      selectedCollectionData?.pages[0]?.products?.forEach((product: any) => {
+        if (product.variants && product.variants.length > 0) {
+          initialVariants[product.productId] = null;
+        } else {
+          initialVariants[product.productId] = {
+            ...product,
+            productId: product.productId,
+            productName: product.name,
+            quantity: 1
+          };
+        }
+      });
+      setSelectedVariants(initialVariants);
+    }
+  }, [selectedCollectionData, showVariantModal]);
+
   // Handlers
-  const handleSelectShelf = (shelf) => {
+  const handleSelectShelf = (shelf: any) => {
     setSelectedShelf(shelf);
     setShowShelfModal(false);
-    setSearchQuery(''); // Reset search when shelf changes
   };
   
-  const handleAddItem = (product) => {
-    const existingItem = selectedItems.find(item => item.id === product.id);
+  const handleAddItem = (product: TProduct) => {
+    const existingItem = selectedItems.find(item => item.sku === product.sku);
     
     if (existingItem) {
       setSelectedItems(prev => prev.map(item =>
-        item.id === product.id
+        item.sku === product.sku
           ? { ...item, quantity: (parseInt(item.quantity) || 1) + 1 }
           : item
       ));
@@ -172,74 +382,50 @@ const AddNewOrder = () => {
     }
   };
   
-  const handleRemoveItem = (itemId) => {
-    setSelectedItems(prev => prev.filter(item => item.id !== itemId));
+  const handleRemoveItem = (identifier: string) => {
+    setSelectedItems(prev => prev.filter(item => 
+      item.sku !== identifier && item.collectionId !== identifier
+    ));
   };
   
-  const handleItemQuantityChange = (itemId, quantity) => {
+  const handleItemQuantityChange = (identifier: string, quantity: number) => {
     if (quantity < 1) return;
     
     setSelectedItems(prev => prev.map(item =>
-      item.id === itemId ? { ...item, quantity } : item
+      (item.sku === identifier || item.collectionId === identifier) 
+        ? { ...item, quantity } 
+        : item
     ));
   };
   
-  const handleItemDiscountChange = (itemId, discount) => {
+  const handleItemDiscountChange = (identifier: string, discount: number) => {
     const discountNum = Math.max(0, Math.min(100, discount));
     
     setSelectedItems(prev => prev.map(item =>
-      item.id === itemId ? { ...item, discount: discountNum } : item
+      item.sku === identifier ? { ...item, discount: discountNum } : item
     ));
   };
   
-  const handleSelectCollection = (collection) => {
+  const handleSelectCollection = (collection: TCollection) => {
     setSelectedCollection(collection);
-    
-    // Generate dummy collection items (in real app, fetch from API)
-    const items = Array.from({ length: collection.itemsCount }, (_, i) => ({
-      id: `col-${collection.id}-item-${i + 1}`,
-      productId: `col-prod-${i + 1}`,
-      name: `Collection Item ${i + 1}`,
-      price: (collection.price / collection.itemsCount) * (1 + Math.random() * 0.5),
-      variants: i % 2 === 0 ? [
-        { id: 'var-1', name: 'Variant A', price: 50, stock: 10 },
-        { id: 'var-2', name: 'Variant B', price: 75, stock: 5 },
-      ] : [],
-    }));
-    
-    setCollectionItems(items);
+    setCollectionDiscount(collection.discount || 0);
     setShowCollectionModal(false);
     setShowVariantModal(true);
-    
-    // Initialize selected variants
-    const initialVariants = {};
-    items.forEach(item => {
-      if (item.variants && item.variants.length > 0) {
-        initialVariants[item.productId] = null;
-      } else {
-        initialVariants[item.productId] = {
-          ...item,
-          quantity: 1,
-          finalPrice: item.price,
-        };
-      }
-    });
-    setSelectedVariants(initialVariants);
   };
   
-  const handleVariantSelection = (productId, variant) => {
+  const handleVariantSelection = (productId: string, variant: any) => {
     setSelectedVariants(prev => ({
       ...prev,
       [productId]: variant ? {
         ...variant,
-        productId,
-        quantity: prev[productId]?.quantity || 1,
-        finalPrice: variant.price,
-      } : null,
+        productId: productId,
+        productName: selectedCollectionData?.items?.find((p: any) => p.id === productId)?.name,
+        quantity: prev[productId]?.quantity || 1
+      } : null
     }));
   };
   
-  const handleVariantQuantityChange = (productId, quantity) => {
+  const handleVariantQuantityChange = (productId: string, quantity: number) => {
     if (selectedVariants[productId]) {
       setSelectedVariants(prev => ({
         ...prev,
@@ -260,36 +446,38 @@ const AddNewOrder = () => {
       return;
     }
     
-    // Calculate collection totals
-    const subtotal = selectedItemsArray.reduce((sum, variant) => {
-      return sum + (variant.finalPrice * variant.quantity);
-    }, 0);
+    if (!selectedCollection) return;
     
+    // Calculate collection totals
+    const subtotal = selectedCollection.subtotal || selectedItemsArray.reduce((sum, variant) => {
+      const price = parseFloat(variant.market_price) || 0;
+      const quantity = variant.quantity || 1;
+      return sum + (price * quantity);
+    }, 0);
+
     const discountAmount = subtotal * (collectionDiscount / 100);
     const finalPrice = subtotal - discountAmount;
-    
+
     // Create collection summary
     const collectionSummary = {
-      id: `collection-${selectedCollection.id}`,
       type: 'collection',
       collectionId: selectedCollection.id,
       collectionName: selectedCollection.name,
       items: selectedItemsArray,
-      subtotal,
+      subtotal: subtotal,
       discount: collectionDiscount,
-      discountAmount,
-      finalPrice,
+      discountAmount: discountAmount,
+      finalPrice: finalPrice,
       quantity: 1,
-      isCollection: true,
+      isCollection: true
     };
-    
+
     setSelectedItems(prev => [...prev, collectionSummary]);
     setSelectedCollections(prev => [...prev, selectedCollection.id]);
     
     // Reset states
     setShowVariantModal(false);
     setSelectedCollection(null);
-    setCollectionItems([]);
     setSelectedVariants({});
     setCollectionDiscount(0);
   };
@@ -298,29 +486,24 @@ const AddNewOrder = () => {
     setPayments(prev => [...prev, { amount: '', method: '', transactionCode: '' }]);
   };
   
-  const handleRemovePayment = (index) => {
+  const handleRemovePayment = (index: number) => {
     if (payments.length > 1) {
       setPayments(prev => prev.filter((_, i) => i !== index));
     }
   };
   
-  const handlePaymentChange = (index, field, value) => {
+  const handlePaymentChange = (index: number, field: string, value: string) => {
     setPayments(prev => prev.map((payment, i) =>
       i === index ? { ...payment, [field]: value } : payment
     ));
   };
   
   const handleSubmitOrder = async () => {
-    if (!selectedShelf) {
-      Alert.alert('Select Shelf', 'Please select a shelf/shop first.');
-      return;
-    }
-    
     if (selectedItems.length === 0) {
       Alert.alert('No Items', 'Please add at least one item to the order.');
       return;
     }
-    
+
     // Validation for delivery orders
     if (orderType === 'delivery') {
       if (!deliveryMethod) {
@@ -332,7 +515,7 @@ const AddNewOrder = () => {
         return;
       }
     }
-    
+
     // Validation for non-walkin orders
     if (orderType !== 'walkin') {
       if (!customerName.trim()) {
@@ -344,14 +527,14 @@ const AddNewOrder = () => {
         return;
       }
     }
-    
+
     // Validate payments
     const validPayments = payments.filter(p => p.amount && p.method);
     if (validPayments.length === 0) {
       Alert.alert('Payment Required', 'Please add at least one payment.');
       return;
     }
-    
+
     if (paymentTerms === 'full' && calculateTotals.pendingAmount > 0) {
       Alert.alert(
         'Payment Mismatch',
@@ -360,40 +543,38 @@ const AddNewOrder = () => {
       );
       return;
     }
-    
+
     setIsSubmitting(true);
-    
-    // Simulate API call
-    setTimeout(() => {
-      setIsSubmitting(false);
-      
-      // Prepare order data
-      const orderData = {
-        shelf: selectedShelf,
+
+    try {
+      const values = {
         orderType,
-        items: selectedItems,
-        customer: orderType !== 'walkin' ? {
-          name: customerName,
-          phone: customerPhone,
-          email: customerEmail,
-        } : null,
-        delivery: orderType === 'delivery' ? {
-          method: deliveryMethod,
-          location: deliveryLocation,
-          courier,
-          fee: parseFloat(deliveryFee) || 0,
-          errandFee: parseFloat(errandFee) || 0,
-        } : null,
+        customerName: orderType !== 'walkin' ? customerName : undefined,
+        phoneNumber: orderType !== 'walkin' ? customerPhone : undefined,
+        email: orderType !== 'walkin' ? customerEmail : undefined,
+        deliveryMethod: orderType === 'delivery' ? deliveryMethod : undefined,
+        deliveryLocation: orderType === 'delivery' ? deliveryLocation : undefined,
+        courier: orderType === 'delivery' ? courier : undefined,
+        deliveryFee: parseFloat(deliveryFee) || 0,
+        errandFee: parseFloat(errandFee) || 0,
         payments: validPayments,
         paymentTerms,
         salesPerson: salesPerson || 'Not specified',
-        notes,
-        totals: calculateTotals,
-        createdAt: new Date().toISOString(),
+        note: notes,
       };
-      
-      console.log('Order data:', orderData);
-      
+
+      await mutation.mutateAsync({
+        ...values,
+        selectedItems,
+        totals: {
+          totalQuantity: calculateTotals.totalQuantity,
+          totalRate: calculateTotals.itemsTotal.toFixed(2),
+          totalAmount: calculateTotals.totalAmount.toFixed(2),
+          amountPaid: calculateTotals.paidAmount,
+          amountPending: calculateTotals.pendingAmount.toFixed(2)
+        }
+      });
+
       Alert.alert(
         'Success',
         'Order created successfully!',
@@ -409,7 +590,11 @@ const AddNewOrder = () => {
           },
         ]
       );
-    }, 2000);
+    } catch (error) {
+      console.error('Error creating order:', error);
+    } finally {
+      setIsSubmitting(false);
+    }
   };
   
   const resetForm = () => {
@@ -431,386 +616,201 @@ const AddNewOrder = () => {
   };
   
   // Render functions
-  const renderShelfItem = ({ item }) => (
+  const renderShelfItem = ({ item }: { item: any }) => (
     <TouchableOpacity
       style={[
-        {
-          flexDirection: 'row',
-          alignItems: 'center',
-          paddingVertical: 16,
-          paddingHorizontal: 12,
-          backgroundColor: '#FFFFFF',
-          borderRadius: 8,
-          marginBottom: 8,
-          borderWidth: 1,
-          borderColor: '#E5E7EB',
-        },
-        selectedShelf?.id === item.id && {
-          backgroundColor: '#F0F9FF',
-          borderColor: '#0EA5E9',
-        },
+        styles.shelfItem,
+        selectedShelf?.id === item.id && styles.shelfItemSelected,
       ]}
       onPress={() => handleSelectShelf(item)}
     >
-      <View style={{
-        width: 48,
-        height: 48,
-        borderRadius: 8,
-        backgroundColor: '#EEF2FF',
-        alignItems: 'center',
-        justifyContent: 'center',
-        marginRight: 12,
-      }}>
+      <View style={styles.shelfIconContainer}>
         <Ionicons name="business-outline" size={24} color="#4F46E5" />
       </View>
-      <View style={{
-        flex: 1,
-      }}>
-        <Text style={{
-          fontSize: 16,
-          fontWeight: '600',
-          color: '#1F2937',
-          marginBottom: 2,
-        }}>{item.name}</Text>
-        <Text style={{
-          fontSize: 14,
-          color: '#6B7280',
-          marginBottom: 2,
-        }}>{item.location}</Text>
-        <Text style={{
-          fontSize: 12,
-          color: '#059669',
-        }}>{item.itemsCount} items available</Text>
+      <View style={styles.shelfInfo}>
+        <Text style={styles.shelfName}>{item.name}</Text>
+        <Text style={styles.shelfLocation}>{item.location}</Text>
+        <Text style={styles.shelfItemsCount}>{item.itemsCount} items available</Text>
       </View>
       {selectedShelf?.id === item.id && (
         <Ionicons name="checkmark-circle" size={24} color="#10B981" />
       )}
     </TouchableOpacity>
   );
-  
-  const renderProductItem = ({ item }) => (
-    <TouchableOpacity
-      style={{
-        flexDirection: 'row',
-        alignItems: 'center',
-        paddingVertical: 12,
-        borderBottomWidth: 1,
-        borderBottomColor: '#F3F4F6',
-      }}
-      onPress={() => handleAddItem(item)}
-    >
-      <Image source={{ uri: item.image }} style={{
-        width: 60,
-        height: 60,
-        borderRadius: 8,
-        backgroundColor: '#F3F4F6',
-      }} />
-      <View style={{
-        flex: 1,
-        marginLeft: 12,
-      }}>
-        <Text style={{
-          fontSize: 16,
-          fontWeight: '500',
-          color: '#1F2937',
-          marginBottom: 2,
-        }} numberOfLines={1}>{item.name}</Text>
-        <Text style={{
-          fontSize: 14,
-          color: '#6B7280',
-          marginBottom: 4,
-        }}>{item.sku}</Text>
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-        }}>
-          <Text style={{
-            fontSize: 16,
-            fontWeight: '600',
-            color: '#059669',
-          }}>KES {item.price.toFixed(2)}</Text>
-          <Text style={{
-            fontSize: 14,
-            color: '#6B7280',
-          }}>Stock: {item.stock}</Text>
-        </View>
-      </View>
-      <TouchableOpacity
-        style={{
-          padding: 8,
-        }}
-        onPress={() => handleAddItem(item)}
-      >
-        <Ionicons name="add-circle-outline" size={24} color="#4F46E5" />
-      </TouchableOpacity>
-    </TouchableOpacity>
-  );
-  
-  const renderCollectionItem = ({ item }) => (
-    <TouchableOpacity
-      style={styles.collectionItem}
-      onPress={() => handleSelectCollection(item)}
-    >
-      <View style={styles.collectionIcon}>
-        <Ionicons name="grid-outline" size={24} color="#8B5CF6" />
-        <Text style={styles.collectionItemCount}>{item.itemsCount}</Text>
-      </View>
-      <View style={styles.collectionInfo}>
-        <Text style={styles.collectionName}>{item.name}</Text>
-        <Text style={styles.collectionDescription} numberOfLines={2}>
-          {item.description}
-        </Text>
-        <View style={styles.collectionFooter}>
-          <Text style={styles.collectionPrice}>KES {item.price.toFixed(2)}</Text>
-          <View style={styles.collectionDiscountBadge}>
-            <Text style={styles.collectionDiscountText}>{item.discount}% OFF</Text>
-          </View>
-        </View>
-      </View>
-    </TouchableOpacity>
-  );
-  
-  const renderSelectedItem = (item, index) => (
-    <View key={item.id} style={styles.selectedItem}>
+
+  const renderSelectedItem = (item: any, index: number) => (
+    <View key={item.sku || item.collectionId} style={styles.selectedItemCard}>
       <View style={styles.selectedItemHeader}>
-        <Text style={styles.selectedItemName}>
-          {item.isCollection ? `${item.collectionName} (Collection)` : item.name}
-        </Text>
-        <TouchableOpacity onPress={() => handleRemoveItem(item.id)}>
-          <Ionicons name="trash-outline" size={20} color="#EF4444" />
+        <View style={styles.selectedItemTitleContainer}>
+          <Ionicons 
+            name={item.isCollection ? "grid" : "cube"} 
+            size={16} 
+            color={item.isCollection ? "#8B5CF6" : "#4F46E5"} 
+          />
+          <Text style={styles.selectedItemName}>
+            {item.isCollection ? item.collectionName : item.label || item.name}
+          </Text>
+        </View>
+        <TouchableOpacity 
+          style={styles.removeItemButton}
+          onPress={() => handleRemoveItem(item.sku || item.collectionId)}
+        >
+          <Ionicons name="close" size={20} color="#DC2626" />
         </TouchableOpacity>
       </View>
       
       {item.isCollection ? (
-        <View style={styles.collectionSummary}>
+        <View style={styles.collectionDetails}>
           <Text style={styles.collectionItemsCount}>
-            {item.items.length} items selected
+            {item.items?.length || 0} items selected
           </Text>
-          <View style={styles.collectionTotal}>
-            <Text style={styles.collectionTotalText}>
-              KES {item.finalPrice.toFixed(2)}
+          <View style={styles.collectionPriceRow}>
+            <Text style={styles.collectionPriceText}>
+              KES {item.finalPrice?.toFixed(2)}
             </Text>
-            <Text style={styles.collectionDiscount}>
-              (Discount: {item.discount}% = -KES {item.discountAmount.toFixed(2)})
+            <Text style={styles.collectionDiscountText}>
+              Save KES {item.discountAmount?.toFixed(2)}
             </Text>
           </View>
         </View>
       ) : (
-        <View>
-          <View style={styles.itemControls}>
-            <View style={styles.quantityControl}>
+        <View style={styles.itemControlsContainer}>
+          <View style={styles.quantitySection}>
+            <Text style={styles.controlLabel}>Quantity</Text>
+            <View style={styles.quantityControls}>
               <TouchableOpacity
                 style={styles.quantityButton}
-                onPress={() => handleItemQuantityChange(item.id, (item.quantity || 1) - 1)}
+                onPress={() => handleItemQuantityChange(item.sku, (item.quantity || 1) - 1)}
               >
-                <Ionicons name="remove-outline" size={16} color="#6B7280" />
+                <Ionicons name="remove" size={16} color="#6B7280" />
               </TouchableOpacity>
               <TextInput
                 style={styles.quantityInput}
                 value={item.quantity?.toString()}
-                onChangeText={(text) => handleItemQuantityChange(item.id, parseInt(text) || 1)}
+                onChangeText={(text) => handleItemQuantityChange(item.sku, parseInt(text) || 1)}
                 keyboardType="numeric"
               />
               <TouchableOpacity
                 style={styles.quantityButton}
-                onPress={() => handleItemQuantityChange(item.id, (item.quantity || 1) + 1)}
+                onPress={() => handleItemQuantityChange(item.sku, (item.quantity || 1) + 1)}
               >
-                <Ionicons name="add-outline" size={16} color="#6B7280" />
+                <Ionicons name="add" size={16} color="#6B7280" />
               </TouchableOpacity>
-            </View>
-
-            <View> 
-              <Text style={styles.discountLabel}>Discount:</Text> 
-              <View style={styles.discountControl}>
-                <TextInput
-                  style={styles.discountInput}
-                  value={item.discount?.toString()}
-                  onChangeText={(text) => handleItemDiscountChange(item.id, parseFloat(text) || 0)}
-                  keyboardType="numeric"
-                  placeholder="0"
-                />
-                <Text style={styles.percentSymbol}>%</Text>
-              </View>
             </View>
           </View>
 
-          <View style={styles.itemTotal}>
-              <Text style={styles.itemTotalText}>
-                KES {((item.price - (item.price * (item.discount || 0) / 100)) * (item.quantity || 1)).toFixed(2)}
-              </Text>
+          <View style={styles.discountSection}>
+            <Text style={styles.controlLabel}>Discount</Text>
+            <View style={styles.discountInputContainer}>
+              <TextInput
+                style={styles.discountInput}
+                value={item.discount?.toString()}
+                onChangeText={(text) => handleItemDiscountChange(item.sku, parseFloat(text) || 0)}
+                keyboardType="numeric"
+                placeholder="0"
+              />
+              <Text style={styles.percentSymbol}>%</Text>
             </View>
+          </View>
+
+          <View style={styles.totalSection}>
+            <Text style={styles.controlLabel}>Total</Text>
+            <Text style={styles.itemTotalText}>
+              KES {(((parseFloat(item.market_price) || 0) - 
+                   (parseFloat(item.market_price) || 0) * ((parseFloat(item.discount) || 0) / 100)) * 
+                   (parseInt(item.quantity) || 1)).toFixed(2)}
+            </Text>
+          </View>
         </View>
       )}
     </View>
   );
-  
-  const renderVariantItem = (item) => (
-    <View key={item.id} style={{
-      backgroundColor: '#FFFFFF',
-      borderRadius: 8,
-      padding: 16,
-      marginBottom: 12,
-      borderWidth: 1,
-      borderColor: '#E5E7EB',
-    }}>
-      <View style={{
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        marginBottom: 12,
-      }}>
-        <Text style={{
-          fontSize: 16,
-          fontWeight: '600',
-          color: '#1F2937',
-        }}>{item.name}</Text>
-        {item.variants && item.variants.length > 0 && (
-          <Text style={{
-            fontSize: 12,
-            color: '#059669',
-            fontWeight: '500',
-          }}>
-            {selectedVariants[item.productId] ? '✓ Selected' : 'Choose variant'}
-          </Text>
-        )}
+
+  const renderVariantItem = (item: any) => (
+    <View key={item.id || item.productId} style={styles.variantCard}>
+      <View style={styles.variantCardHeader}>
+        <View style={styles.variantCardTitleContainer}>
+          <Text style={styles.variantCardTitle}>{item.name || item.label}</Text>
+          {item.variants && item.variants.length > 0 && (
+            <View style={[
+              styles.variantStatusBadge,
+              selectedVariants[item.productId] ? styles.variantSelectedBadge : styles.variantUnselectedBadge
+            ]}>
+              <Text style={styles.variantStatusText}>
+                {selectedVariants[item.productId] ? 'Selected' : 'Select'}
+              </Text>
+            </View>
+          )}
+        </View>
       </View>
       
       {item.variants && item.variants.length > 0 ? (
-        <View style={{
-          gap: 8,
-        }}>
-          {item.variants.map(variant => (
+        <ScrollView 
+          horizontal 
+          showsHorizontalScrollIndicator={false}
+          style={styles.variantScrollView}
+          nestedScrollEnabled={true}
+        >
+          {item.variants.map((variant: any) => (
             <TouchableOpacity
-              key={variant.id}
+              key={variant.sku}
               style={[
-                {
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'space-between',
-                  padding: 12,
-                  borderRadius: 6,
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  backgroundColor: '#F9FAFB',
-                },
-                selectedVariants[item.productId]?.id === variant.id && {
-                  backgroundColor: '#F0F9FF',
-                  borderColor: '#0EA5E9',
-                },
+                styles.variantOptionCard,
+                selectedVariants[item.productId]?.sku === variant.sku && styles.variantOptionCardSelected,
               ]}
               onPress={() => handleVariantSelection(item.productId, variant)}
             >
-              <View style={{
-                flex: 1,
-              }}>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '500',
-                  color: '#1F2937',
-                  marginBottom: 2,
-                }}>{variant.name}</Text>
-                <Text style={{
-                  fontSize: 12,
-                  color: '#059669',
-                  marginBottom: 2,
-                }}>KES {variant.price.toFixed(2)}</Text>
-                <Text style={{
-                  fontSize: 11,
-                  color: '#6B7280',
-                }}>Stock: {variant.stock}</Text>
-              </View>
-              {selectedVariants[item.productId]?.id === variant.id && (
-                <Ionicons name="checkmark-circle" size={20} color="#10B981" />
+              <Image
+                  source={{
+                    uri:
+                      convertCloudinaryUrlToPng(variant.images?.[0]) ||
+                      convertCloudinaryUrlToPng(item.images?.[0]) ||
+                      "https://via.placeholder.com/150",
+                  }}
+                  style={styles.variantOptionImage}
+                />
+              <Text style={styles.variantOptionName} numberOfLines={1}>{variant.label}</Text>
+              <Text style={styles.variantOptionPrice}>
+                KES {parseFloat(item.market_price?.toString() || '0').toFixed(2)}
+              </Text>
+              {selectedVariants[item.productId]?.sku === variant.sku && (
+                <View style={styles.variantSelectedIndicator}>
+                  <Ionicons name="checkmark-circle" size={24} color="#10B981" />
+                </View>
               )}
             </TouchableOpacity>
           ))}
-        </View>
+        </ScrollView>
       ) : (
-        <View style={{
-          flexDirection: 'row',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: 12,
-          backgroundColor: '#F3F4F6',
-          borderRadius: 6,
-        }}>
-          <Text style={{
-            fontSize: 14,
-            color: '#6B7280',
-          }}>No variants available</Text>
-          <Text style={{
-            fontSize: 14,
-            fontWeight: '600',
-            color: '#059669',
-          }}>KES {item.price.toFixed(2)}</Text>
+        <View style={styles.noVariantsContainer}>
+          <Text style={styles.noVariantsText}>No variants available</Text>
+          <Text style={styles.noVariantsPrice}>
+            KES {parseFloat(item.market_price?.toString() || '0').toFixed(2)}
+          </Text>
         </View>
       )}
       
       {selectedVariants[item.productId] && (
-        <View style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginTop: 12,
-          paddingTop: 12,
-          borderTopWidth: 1,
-          borderTopColor: '#E5E7EB',
-        }}>
-          <Text style={{
-            fontSize: 14,
-            fontWeight: '500',
-            color: '#1F2937',
-          }}>Quantity:</Text>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-          }}>
+        <View style={styles.variantQuantitySection}>
+          <Text style={styles.variantQuantityLabel}>Quantity</Text>
+          <View style={styles.variantQuantityControls}>
             <TouchableOpacity
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 4,
-                borderWidth: 1,
-                borderColor: '#E5E7EB',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#FFFFFF',
-              }}
+              style={styles.variantQuantityButton}
               onPress={() => handleVariantQuantityChange(item.productId, selectedVariants[item.productId].quantity - 1)}
             >
-              <Ionicons name="remove-outline" size={14} color="#6B7280" />
+              <Ionicons name="remove" size={16} color="#6B7280" />
             </TouchableOpacity>
             <TextInput
-              style={{
-                width: 40,
-                height: 28,
-                textAlign: 'center',
-                fontSize: 14,
-                fontWeight: '500',
-                color: '#1F2937',
-                borderWidth: 1,
-                borderColor: '#E5E7EB',
-                borderRadius: 4,
-                marginHorizontal: 4,
-              }}
+              style={styles.variantQuantityInput}
               value={selectedVariants[item.productId].quantity?.toString()}
               onChangeText={(text) => handleVariantQuantityChange(item.productId, parseInt(text) || 1)}
               keyboardType="numeric"
             />
             <TouchableOpacity
-              style={{
-                width: 28,
-                height: 28,
-                borderRadius: 4,
-                borderWidth: 1,
-                borderColor: '#E5E7EB',
-                alignItems: 'center',
-                justifyContent: 'center',
-                backgroundColor: '#FFFFFF',
-              }}
+              style={styles.variantQuantityButton}
               onPress={() => handleVariantQuantityChange(item.productId, selectedVariants[item.productId].quantity + 1)}
             >
-              <Ionicons name="add-outline" size={14} color="#6B7280" />
+              <Ionicons name="add" size={16} color="#6B7280" />
             </TouchableOpacity>
           </View>
         </View>
@@ -819,280 +819,95 @@ const AddNewOrder = () => {
   );
 
   return (
-    <SafeAreaView style={{
-      flex: 1,
-      backgroundColor: '#F9FAFB',
-    }}>
+    <SafeAreaView style={styles.container}>
       <ScrollView 
-        style={{
-          flex: 1,
-        }}
+        style={styles.scrollView}
         showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
       >
         {/* Header */}
         <LinearGradient
-          colors={[COLORS.primary, '#764ba2']}
-          style={{
-            height: 160,
-            borderBottomRightRadius: 40,
-            borderBottomLeftRadius: 40,
-            paddingTop: 60,
-            paddingBottom: 30,
-            position: 'relative',
-            overflow: 'hidden',
-          }}
+          colors={[COLORS.primary, COLORS.primary]}
+          style={styles.headerGradient}
         >
-          {/* Background pattern */}
-          <View style={{
-            position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            opacity: 0.15,
-          }}>
-            <View style={{
-              width: 200,
-              height: 200,
-              backgroundColor: 'white',
-              borderRadius: 100,
-              position: 'absolute',
-              top: -50,
-              right: -50,
-            }} />
-            <View style={{
-              width: 150,
-              height: 150,
-              backgroundColor: 'white',
-              borderRadius: 75,
-              position: 'absolute',
-              bottom: -30,
-              left: -30,
-            }} />
-          </View>
-
-          {/* Content with glass effect */}
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 24,
-            paddingVertical: 16,
-            backgroundColor: 'rgba(255, 255, 255, 0.1)',
-            marginHorizontal: 20,
-            borderRadius: 20,
-            backdropFilter: 'blur(10px)',
-            borderWidth: 1,
-            borderColor: 'rgba(255, 255, 255, 0.2)',
-          }}>
+          <View style={styles.headerContent}>
             <TouchableOpacity 
               onPress={() => router.back()} 
-              style={{
-                padding: 10,
-                backgroundColor: 'rgba(255, 255, 255, 0.2)',
-                borderRadius: 12,
-              }}
+              style={styles.backButton}
             >
               <Ionicons name="arrow-back" size={22} color={COLORS.white} />
             </TouchableOpacity>
             
             <View style={{ alignItems: 'center' }}>
-              <Text style={{
-                fontSize: 20,
-                fontWeight: '700',
-                color: COLORS.white,
-                letterSpacing: 0.5,
-                textShadowColor: 'rgba(0, 0, 0, 0.2)',
-                textShadowOffset: { width: 1, height: 1 },
-                textShadowRadius: 3,
-              }}>New Sales Order</Text>
-              <Text style={{
-                fontSize: 12,
-                color: 'rgba(255, 255, 255, 0.8)',
-                marginTop: 4,
-              }}>Create a new order</Text>
+              <Text style={styles.headerTitle}>New Sales Order</Text>
+              <Text style={styles.headerSubtitle}>Add items and create order</Text>
             </View>
             
-            <TouchableOpacity style={{
-              padding: 10,
-              backgroundColor: 'rgba(255, 255, 255, 0.2)',
-              borderRadius: 12,
-            }}>
+            <TouchableOpacity style={styles.notificationButton}>
               <Ionicons name="notifications-outline" size={22} color={COLORS.white} />
             </TouchableOpacity>
           </View>
         </LinearGradient>
         
-        
         {/* Shelf Selection */}
-        <View style={{
-          backgroundColor: '#FFFFFF',
-          marginHorizontal: 16,
-          marginTop: 16,
-          borderRadius: 12,
-          padding: 16,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 2,
-          elevation: 2,
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}>
-            <Ionicons name="business-outline" size={20} color={COLORS.primary} />
-            <Text style={{
-              fontSize: 16,
-              fontWeight: '600',
-              color: '#1F2937',
-              marginLeft: 8,
-            }}>Select Shelf/Shop</Text>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderIcon}>
+              <Ionicons name="storefront-outline" size={20} color={COLORS.primary} />
+            </View>
+            <Text style={styles.cardTitle}>Shop Location</Text>
           </View>
           
           <TouchableOpacity
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'space-between',
-              padding: 16,
-              backgroundColor: '#F9FAFB',
-              borderRadius: 8,
-              borderWidth: 1,
-              borderColor: '#E5E7EB',
-              borderStyle: 'dashed',
-            }}
+            style={styles.shelfSelector}
             onPress={() => setShowShelfModal(true)}
           >
             {selectedShelf ? (
-              <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  flex: 1,
-                }}>
-                <View style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: 8,
-                  backgroundColor: '#EEF2FF',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 12,
-                }}>
+              <View style={styles.selectedShelfInfo}>
+                <View style={styles.selectedShelfIcon}>
                   <Ionicons name="business" size={20} color={COLORS.primary} />
                 </View>
-                <View style={{
-                  flex: 1,
-                }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#1F2937',
-                    marginBottom: 2,
-                  }}>{selectedShelf.name}</Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#6B7280',
-                  }}>{selectedShelf.location}</Text>
+                <View style={styles.selectedShelfDetails}>
+                  <Text style={styles.selectedShelfName}>{selectedShelf.name}</Text>
+                  <Text style={styles.selectedShelfLocation}>{selectedShelf.location}</Text>
                 </View>
               </View>
             ) : (
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                flex: 1,
-              }}>
+              <View style={styles.shelfSelectorPlaceholder}>
                 <Ionicons name="business-outline" size={20} color="#9CA3AF" />
-                <Text style={{
-                  fontSize: 16,
-                  color: '#9CA3AF',
-                  marginLeft: 8,
-                }}>Tap to select a shelf/shop</Text>
+                <Text style={styles.shelfSelectorText}>Select shop location</Text>
               </View>
             )}
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </TouchableOpacity>
-          
-          {selectedShelf && (
-            <Text style={{
-              fontSize: 14,
-              color: '#6B7280',
-              marginTop: 8,
-              fontStyle: 'italic',
-            }}>
-              Showing items from {selectedShelf.name}
-            </Text>
-          )}
         </View>
         
         {/* Order Type */}
-        <View style={{
-          backgroundColor: '#FFFFFF',
-          marginHorizontal: 16,
-          marginTop: 16,
-          borderRadius: 12,
-          padding: 16,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 2,
-          elevation: 2,
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}>
-            <Ionicons name="cart-outline" size={20} color={COLORS.primary} />
-            <Text style={{
-              fontSize: 16,
-              fontWeight: '600',
-              color: '#1F2937',
-              marginLeft: 8,
-            }}>Order Type</Text>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderIcon}>
+              <Ionicons name="receipt-outline" size={20} color={COLORS.primary} />
+            </View>
+            <Text style={styles.cardTitle}>Order Type</Text>
           </View>
           
-          <View style={{
-            flexDirection: 'row',
-            justifyContent: 'space-between',
-          }}>
+          <View style={styles.orderTypeGrid}>
             <TouchableOpacity
               style={[
-                {
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 12,
-                  paddingHorizontal: 8,
-                  marginHorizontal: 4,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                },
-                orderType === 'walkin' && {
-                  backgroundColor: COLORS.primary,
-                },
+                styles.orderTypeCard,
+                orderType === 'walkin' && styles.orderTypeCardActive,
               ]}
               onPress={() => setOrderType('walkin')}
             >
-              <Ionicons 
-                name="person-outline" 
-                size={20} 
-                color={orderType === 'walkin' ? '#FFFFFF' : '#6B7280'} 
-              />
+              <View style={[
+                styles.orderTypeIcon,
+                orderType === 'walkin' ? styles.orderTypeIconActive : styles.orderTypeIconInactive
+              ]}>
+                <Ionicons name="person" size={24} color={orderType === 'walkin' ? COLORS.primary : '#9CA3AF'} />
+              </View>
               <Text style={[
-                {
-                  fontSize: 14,
-                  fontWeight: '500',
-                  color: '#6B7280',
-                  marginLeft: 4,
-                },
-                orderType === 'walkin' && {
-                  color: '#FFFFFF',
-                },
+                styles.orderTypeCardText,
+                orderType === 'walkin' && styles.orderTypeCardTextActive,
               ]}>
                 Walk-in
               </Text>
@@ -1100,45 +915,20 @@ const AddNewOrder = () => {
             
             <TouchableOpacity
               style={[
-                {
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 12,
-                  paddingHorizontal: 8,
-                  marginHorizontal: 4,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                },
-                orderType === 'pickup' && {
-                  backgroundColor: COLORS.primary,
-                },
+                styles.orderTypeCard,
+                orderType === 'pickup' && styles.orderTypeCardActive,
               ]}
               onPress={() => setOrderType('pickup')}
             >
-              <Ionicons 
-                name="car-outline" 
-                size={20} 
-                color={orderType === 'pickup' ? '#FFFFFF' : '#6B7280'} 
-              />
+              <View style={[
+                styles.orderTypeIcon,
+                orderType === 'pickup' ? styles.orderTypeIconActive : styles.orderTypeIconInactive
+              ]}>
+                <Ionicons name="car" size={24} color={orderType === 'pickup' ? COLORS.primary : '#9CA3AF'} />
+              </View>
               <Text style={[
-                {
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 12,
-                  paddingHorizontal: 8,
-                  marginHorizontal: 4,
-                  borderRadius: 8,
-                  backgroundColor: '#FFFFFF',
-                },
-                orderType === 'pickup' && {
-                  backgroundColor: COLORS.primary,
-                },
+                styles.orderTypeCardText,
+                orderType === 'pickup' && styles.orderTypeCardTextActive,
               ]}>
                 Pickup
               </Text>
@@ -1146,44 +936,20 @@ const AddNewOrder = () => {
             
             <TouchableOpacity
               style={[
-                {
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 12,
-                  paddingHorizontal: 8,
-                  marginHorizontal: 4,
-                  borderRadius: 8,
-                  borderWidth: 1,
-                  borderColor: '#E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                },
-                orderType === 'delivery' && {
-                  backgroundColor: COLORS.primary,
-                },
+                styles.orderTypeCard,
+                orderType === 'delivery' && styles.orderTypeCardActive,
               ]}
               onPress={() => setOrderType('delivery')}
             >
-              <Ionicons 
-                name="cube-outline" 
-                size={20} 
-                color={orderType === 'delivery' ? '#FFFFFF' : '#6B7280'} 
-              />
+              <View style={[
+                styles.orderTypeIcon,
+                orderType === 'delivery' ? styles.orderTypeIconActive : styles.orderTypeIconInactive
+              ]}>
+                <Ionicons name="cube" size={24} color={orderType === 'delivery' ? COLORS.primary : '#9CA3AF'} />
+              </View>
               <Text style={[
-                {
-                  flex: 1,
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 12,
-                  paddingHorizontal: 8,
-                  marginHorizontal: 4,
-                  
-                },
-                orderType === 'delivery' && {
-                  backgroundColor: COLORS.primary,
-                },
+                styles.orderTypeCardText,
+                orderType === 'delivery' && styles.orderTypeCardTextActive,
               ]}>
                 Delivery
               </Text>
@@ -1191,54 +957,21 @@ const AddNewOrder = () => {
           </View>
         </View>
         
-        {/* Search Items */}
-        <View style={{
-          backgroundColor: '#FFFFFF',
-          marginHorizontal: 16,
-          marginTop: 16,
-          borderRadius: 12,
-          padding: 16,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 2,
-          elevation: 2,
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}>
-            <Ionicons name="search-outline" size={20} color={COLORS.primary} />
-            <Text style={{
-              fontSize: 16,
-              fontWeight: '600',
-              color: '#1F2937',
-              marginLeft: 8,
-            }}>Add Items</Text>
+        {/* Add Items Section */}
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderIcon}>
+              <Ionicons name="add-circle-outline" size={20} color={COLORS.primary} />
+            </View>
+            <Text style={styles.cardTitle}>Add Items</Text>
           </View>
           
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: '#F9FAFB',
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: '#E5E7EB',
-            paddingHorizontal: 12,
-            marginBottom: 16,
-          }}>
-            <Ionicons name="search" size={20} color="#9CA3AF" style={{
-              marginRight: 8,
-            }} />
+          {/* Search Bar */}
+          <View style={styles.searchContainer}>
+            <Ionicons name="search" size={20} color="#9CA3AF" style={styles.searchIcon} />
             <TextInput
-              style={{
-                flex: 1,
-                height: 44,
-                fontSize: 16,
-                color: '#1F2937',
-              }}
-              placeholder="Search products by name or SKU..."
+              style={styles.searchInput}
+              placeholder="Search products or collections..."
               value={searchQuery}
               onChangeText={setSearchQuery}
             />
@@ -1249,172 +982,131 @@ const AddNewOrder = () => {
             )}
           </View>
           
-          {/* Products List */}
-          {selectedShelf && (
-            <FlatList
-              data={filteredProducts}
-              renderItem={renderProductItem}
-              keyExtractor={item => item.id}
-              scrollEnabled={false}
-              ListHeaderComponent={
-                <View style={{
-                  flexDirection: 'row',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  marginBottom: 12,
-                }}>
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#1F2937',
-                  }}>Products</Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#6B7280',
-                  }}>{filteredProducts.length} items</Text>
-                </View>
-              }
-              ListEmptyComponent={
-                <View style={{
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  paddingVertical: 48,
-                }}>
-                  <Ionicons name="alert-circle-outline" size={48} color="#9CA3AF" />
-                  <Text style={{
-                    fontSize: 16,
-                    color: '#6B7280',
-                    marginTop: 12,
-                  }}>No products found</Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#9CA3AF',
-                    marginTop: 4,
-                  }}>
-                    Try a different search or select another shelf
-                  </Text>
-                </View>
-              }
-            />
-          )}
+          {/* Tab Navigation */}
+          <View style={styles.tabContainer}>
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'products' && styles.tabButtonActive,
+              ]}
+              onPress={() => setActiveTab('products')}
+            >
+              <Ionicons 
+                name="cube-outline" 
+                size={18} 
+                color={activeTab === 'products' ? COLORS.primary : '#6B7280'} 
+              />
+              <Text style={[
+                styles.tabButtonText,
+                activeTab === 'products' && styles.tabButtonTextActive,
+              ]}>
+                Products
+              </Text>
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={[
+                styles.tabButton,
+                activeTab === 'collections' && styles.tabButtonActive,
+              ]}
+              onPress={() => setActiveTab('collections')}
+            >
+              <Ionicons 
+                name="grid-outline" 
+                size={18} 
+                color={activeTab === 'collections' ? COLORS.primary : '#6B7280'} 
+              />
+              <Text style={[
+                styles.tabButtonText,
+                activeTab === 'collections' && styles.tabButtonTextActive,
+              ]}>
+                Collections
+              </Text>
+            </TouchableOpacity>
+          </View>
           
-          {/* Collections Button */}
-          <TouchableOpacity
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingVertical: 12,
-              backgroundColor: '#F5F3FF',
-              borderRadius: 8,
-              marginTop: 16,
-            }}
-            onPress={() => setShowCollectionModal(true)}
-          >
-            <Ionicons name="grid-outline" size={20} color={COLORS.primary} />
-            <Text style={{
-              fontSize: 16,
-              fontWeight: '500',
-              color: COLORS.primary,
-              marginHorizontal: 8,
-            }}>Browse Collections</Text>
-            <Ionicons name="chevron-forward" size={20} color={COLORS.primary} />
-          </TouchableOpacity>
+          {/* Items List with Infinite Scroll */}
+          <View style={styles.itemsListContainer}>
+            {activeTab === 'products' ? (
+              <InfiniteScrollView
+                data={allProducts}
+                renderItem={renderProductItem}
+                keyExtractor={(item) => item.sku}
+                onLoadMore={loadMoreProducts}
+                onRefresh={onRefresh}
+                hasMoreData={hasNextProductsPage}
+                isLoading={isFetchingNextProductsPage}
+                isRefreshing={refreshing}
+                loadingText="Loading more products..."
+                emptyComponent={renderProductsEmpty()}
+                numColumns={2}
+                columnWrapperStyle={styles.productsColumnWrapper}
+                contentContainerStyle={styles.productsGrid}
+                nestedScrollEnabled={true}
+              />
+            ) : (
+              <InfiniteScrollView
+                data={allCollections}
+                renderItem={renderCollectionItem}
+                keyExtractor={(item) => item.id}
+                onLoadMore={loadMoreCollections}
+                onRefresh={onRefresh}
+                hasMoreData={hasNextCollectionsPage}
+                isLoading={isFetchingNextCollectionsPage}
+                isRefreshing={refreshing}
+                loadingText="Loading more collections..."
+                emptyComponent={renderCollectionsEmpty()}
+                contentContainerStyle={styles.collectionsList}
+                nestedScrollEnabled={true}
+                numColumns={2}
+              />
+            )}
+          </View>
         </View>
         
         {/* Selected Items */}
         {selectedItems.length > 0 && (
-          <View style={{
-            backgroundColor: '#FFFFFF',
-            marginHorizontal: 16,
-            marginTop: 16,
-            borderRadius: 12,
-            padding: 16,
-            shadowColor: '#000',
-            shadowOffset: { width: 0, height: 1 },
-            shadowOpacity: 0.05,
-            shadowRadius: 2,
-            elevation: 2,
-          }}>
-            <View style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              marginBottom: 16,
-            }}>
-              <Ionicons name="list-outline" size={20} color={COLORS.primary} />
-              <Text style={{
-                fontSize: 16,
-                fontWeight: '600',
-                color: '#1F2937',
-                marginLeft: 8,
-              }}>Selected Items ({selectedItems.length})</Text>
+          <View style={styles.card}>
+            <View style={styles.cardHeader}>
+              <View style={styles.cardHeaderIcon}>
+                <Ionicons name="cart" size={20} color={COLORS.primary} />
+              </View>
+              <Text style={styles.cardTitle}>Order Items ({selectedItems.length})</Text>
+              <View style={styles.selectedItemsBadge}>
+                <Text style={styles.selectedItemsBadgeText}>{selectedItems.length}</Text>
+              </View>
             </View>
             
-            {selectedItems.map(renderSelectedItem)}
+            <ScrollView 
+              style={styles.selectedItemsScroll}
+              showsVerticalScrollIndicator={false}
+              nestedScrollEnabled={true}
+            >
+              {selectedItems.map(renderSelectedItem)}
+            </ScrollView>
             
             {/* Order Summary */}
-            <View style={{
-              backgroundColor: '#F0F9FF',
-              borderRadius: 8,
-              padding: 16,
-              marginTop: 16,
-            }}>
-              <View style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-              }}>
-                <Text style={{
-                  fontSize: 14,
-                  color: '#0C4A6E',
-                }}>Subtotal:</Text>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '500',
-                  color: '#0C4A6E',
-                }}>
+            <View style={styles.orderSummaryCard}>
+              <View style={styles.summaryRow}>
+                <Text style={styles.summaryLabel}>Items Total</Text>
+                <Text style={styles.summaryValue}>
                   KES {calculateTotals.itemsTotal.toFixed(2)}
                 </Text>
               </View>
               
               {orderType === 'delivery' && (
                 <>
-                  <View style={{
-                    flexDirection: 'row',
-                    justifyContent: 'space-between',
-                    alignItems: 'center',
-                    marginBottom: 8,
-                  }}>
-                    <Text style={{
-                      fontSize: 14,
-                      color: '#0C4A6E',
-                    }}>Delivery Fee:</Text>
-                    <Text style={{
-                      fontSize: 14,
-                      fontWeight: '500',
-                      color: '#0C4A6E',
-                    }}>
+                  <View style={styles.summaryRow}>
+                    <Text style={styles.summaryLabel}>Delivery Fee</Text>
+                    <Text style={styles.summaryValue}>
                       KES {calculateTotals.deliveryFee.toFixed(2)}
                     </Text>
                   </View>
                   
                   {parseFloat(errandFee) > 0 && (
-                    <View style={{
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      marginBottom: 8,
-                    }}>
-                      <Text style={{
-                        fontSize: 14,
-                        color: '#0C4A6E',
-                      }}>Errand Fee:</Text>
-                      <Text style={{
-                        fontSize: 14,
-                        fontWeight: '500',
-                        color: '#0C4A6E',
-                      }}>
+                    <View style={styles.summaryRow}>
+                      <Text style={styles.summaryLabel}>Errand Fee</Text>
+                      <Text style={styles.summaryValue}>
                         KES {calculateTotals.errandFee.toFixed(2)}
                       </Text>
                     </View>
@@ -1422,27 +1114,11 @@ const AddNewOrder = () => {
                 </>
               )}
               
-              <View style={[{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-              }, {
-                borderTopWidth: 1,
-                borderTopColor: '#BAE6FD',
-                paddingTop: 12,
-                marginTop: 4,
-              }]}>
-                <Text style={{
-                  fontSize: 16,
-                  fontWeight: '600',
-                  color: '#0C4A6E',
-                }}>Total Amount:</Text>
-                <Text style={{
-                  fontSize: 18,
-                  fontWeight: '700',
-                  color: '#0C4A6E',
-                }}>
+              <View style={styles.divider} />
+              
+              <View style={styles.totalRow}>
+                <Text style={styles.totalLabel}>Grand Total</Text>
+                <Text style={styles.totalValue}>
                   KES {calculateTotals.totalAmount.toFixed(2)}
                 </Text>
               </View>
@@ -1454,36 +1130,40 @@ const AddNewOrder = () => {
         {orderType !== 'walkin' && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Ionicons name="person-circle-outline" size={20} color="#4F46E5" />
+              <View style={styles.cardHeaderIcon}>
+                <Ionicons name="person-circle-outline" size={20} color={COLORS.primary} />
+              </View>
               <Text style={styles.cardTitle}>Customer Information</Text>
             </View>
             
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Customer Name *</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter customer name"
-                value={customerName}
-                onChangeText={setCustomerName}
-              />
+            <View style={styles.inputRow}>
+              <View style={styles.inputColumn}>
+                <Text style={styles.inputLabel}>Name *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Customer name"
+                  value={customerName}
+                  onChangeText={setCustomerName}
+                />
+              </View>
+              
+              <View style={styles.inputColumn}>
+                <Text style={styles.inputLabel}>Phone *</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Phone number"
+                  value={customerPhone}
+                  onChangeText={setCustomerPhone}
+                  keyboardType="phone-pad"
+                />
+              </View>
             </View>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Phone Number *</Text>
+              <Text style={styles.inputLabel}>Email</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Enter phone number"
-                value={customerPhone}
-                onChangeText={setCustomerPhone}
-                keyboardType="phone-pad"
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Email Address</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter email address"
+                placeholder="Email address"
                 value={customerEmail}
                 onChangeText={setCustomerEmail}
                 keyboardType="email-address"
@@ -1497,150 +1177,104 @@ const AddNewOrder = () => {
         {orderType === 'delivery' && (
           <View style={styles.card}>
             <View style={styles.cardHeader}>
-              <Ionicons name="cube-outline" size={20} color="#4F46E5" />
-              <Text style={styles.cardTitle}>Delivery Information</Text>
+              <View style={styles.cardHeaderIcon}>
+                <Ionicons name="navigate-outline" size={20} color={COLORS.primary} />
+              </View>
+              <Text style={styles.cardTitle}>Delivery Details</Text>
             </View>
             
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Delivery Method *</Text>
-              <View style={styles.pickerContainer}>
-                <Picker
-                  selectedValue={deliveryMethod}
-                  onValueChange={setDeliveryMethod}
-                  style={styles.picker}
-                >
-                  <Picker.Item label="Select method" value="" />
-                  <Picker.Item label="Pick Up Mtaani" value="pickup_mtaani" />
-                  <Picker.Item label="Rider" value="rider" />
-                  <Picker.Item label="Errand Person" value="errand_person" />
-                  <Picker.Item label="Parcel" value="parcel" />
-                </Picker>
+            <View style={styles.inputRow}>
+              <View style={styles.inputColumn}>
+                <Text style={styles.inputLabel}>Method *</Text>
+                <View style={styles.pickerContainer}>
+                  <Picker
+                    selectedValue={deliveryMethod}
+                    onValueChange={setDeliveryMethod}
+                    style={styles.picker}
+                  >
+                    <Picker.Item label="Select method" value="" />
+                    <Picker.Item label="Pick Up Mtaani" value="pickup_mtaani" />
+                    <Picker.Item label="Rider" value="rider" />
+                    <Picker.Item label="Errand Person" value="errand_person" />
+                    <Picker.Item label="Parcel" value="parcel" />
+                  </Picker>
+                </View>
+              </View>
+              
+              <View style={styles.inputColumn}>
+                <Text style={styles.inputLabel}>Fee</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="0.00"
+                  value={deliveryFee}
+                  onChangeText={setDeliveryFee}
+                  keyboardType="decimal-pad"
+                />
               </View>
             </View>
             
             <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Delivery Location *</Text>
+              <Text style={styles.inputLabel}>Location *</Text>
               <TextInput
                 style={styles.input}
-                placeholder="Enter delivery location"
+                placeholder="Delivery address"
                 value={deliveryLocation}
                 onChangeText={setDeliveryLocation}
               />
             </View>
             
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Courier</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="Enter courier name"
-                value={courier}
-                onChangeText={setCourier}
-              />
-            </View>
-            
-            <View style={styles.inputGroup}>
-              <Text style={styles.inputLabel}>Delivery Fee</Text>
-              <TextInput
-                style={styles.input}
-                placeholder="0.00"
-                value={deliveryFee}
-                onChangeText={setDeliveryFee}
-                keyboardType="decimal-pad"
-                prefix="KES"
-              />
-            </View>
-            
-            {deliveryMethod === 'parcel' && (
-              <View style={styles.inputGroup}>
-                <Text style={styles.inputLabel}>Errand Fee *</Text>
+            <View style={styles.inputRow}>
+              <View style={styles.inputColumn}>
+                <Text style={styles.inputLabel}>Courier</Text>
                 <TextInput
                   style={styles.input}
-                  placeholder="0.00"
-                  value={errandFee}
-                  onChangeText={setErrandFee}
-                  keyboardType="decimal-pad"
-                  prefix="KES"
+                  placeholder="Courier name"
+                  value={courier}
+                  onChangeText={setCourier}
                 />
               </View>
-            )}
+              
+              {deliveryMethod === 'parcel' && (
+                <View style={styles.inputColumn}>
+                  <Text style={styles.inputLabel}>Errand Fee</Text>
+                  <TextInput
+                    style={styles.input}
+                    placeholder="0.00"
+                    value={errandFee}
+                    onChangeText={setErrandFee}
+                    keyboardType="decimal-pad"
+                  />
+                </View>
+              )}
+            </View>
           </View>
         )}
         
         {/* Payment Information */}
-        <View style={{
-          backgroundColor: '#FFFFFF',
-          marginHorizontal: 16,
-          marginTop: 16,
-          borderRadius: 12,
-          padding: 16,
-          shadowColor: '#000',
-          shadowOffset: { width: 0, height: 1 },
-          shadowOpacity: 0.05,
-          shadowRadius: 2,
-          elevation: 2,
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            marginBottom: 16,
-          }}>
-            <Ionicons name="card-outline" size={20} color={COLORS.primary} />
-            <Text style={{
-              fontSize: 16,
-              fontWeight: '600',
-              color: '#1F2937',
-              marginLeft: 8,
-            }}>Payment Information</Text>
+        <View style={styles.card}>
+          <View style={styles.cardHeader}>
+            <View style={styles.cardHeaderIcon}>
+              <Ionicons name="card-outline" size={20} color={COLORS.primary} />
+            </View>
+            <Text style={styles.cardTitle}>Payment Information</Text>
           </View>
           
           {payments.map((payment, index) => (
-            <View key={index} style={{
-              marginBottom: 16,
-              paddingBottom: 16,
-              borderBottomWidth: 1,
-              borderBottomColor: '#F3F4F6',
-            }}>
-              <View style={{
-                flexDirection: 'row',
-                justifyContent: 'space-between',
-                alignItems: 'center',
-                marginBottom: 8,
-              }}>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '600',
-                  color: '#1F2937',
-                }}>Payment {index + 1}</Text>
+            <View key={index} style={styles.paymentCard}>
+              <View style={styles.paymentCardHeader}>
+                <Text style={styles.paymentCardTitle}>Payment {index + 1}</Text>
                 {payments.length > 1 && (
                   <TouchableOpacity onPress={() => handleRemovePayment(index)}>
-                    <Ionicons name="trash-outline" size={18} color="#EF4444" />
+                    <Ionicons name="trash-outline" size={18} color="#DC2626" />
                   </TouchableOpacity>
                 )}
               </View>
               
-              <View style={{
-                gap: 12,
-              }}>
-                <View style={{
-                  flex: 1,
-                }}>
-                  <Text style={{
-                    fontSize: 14,
-                    fontWeight: '500',
-                    color: '#374151',
-                    marginBottom: 4,
-                  }}>Amount *</Text>
+              <View style={styles.paymentInputRow}>
+                <View style={styles.paymentInputColumn}>
+                  <Text style={styles.inputLabel}>Amount *</Text>
                   <TextInput
-                    style={{
-                      height: 44,
-                      borderWidth: 1,
-                      borderColor: '#D1D5DB',
-                      borderRadius: 8,
-                      paddingHorizontal: 12,
-                      fontSize: 16,
-                      color: '#1F2937',
-                      backgroundColor: '#FFFFFF',
-                    }}
+                    style={styles.input}
                     placeholder="0.00"
                     value={payment.amount}
                     onChangeText={(text) => handlePaymentChange(index, 'amount', text)}
@@ -1648,220 +1282,94 @@ const AddNewOrder = () => {
                   />
                 </View>
                 
-                <View style={{
-                  flex: 1,
-                }}>
-                  <Text style={{
-                    fontSize: 14,
-                    fontWeight: '500',
-                    color: '#374151',
-                    marginBottom: 4,
-                  }}>Payment Account *</Text>
-                  <View style={{
-                    borderWidth: 1,
-                    borderColor: '#D1D5DB',
-                    borderRadius: 8,
-                    backgroundColor: '#FFFFFF',
-                    overflow: 'hidden',
-                  }}>
+                <View style={styles.paymentInputColumn}>
+                  <Text style={styles.inputLabel}>Account *</Text>
+                  <View style={styles.pickerContainer}>
                     <Picker
                       selectedValue={payment.method}
                       onValueChange={(value) => handlePaymentChange(index, 'method', value)}
-                      style={{
-                        height: 54,
-                      }}
+                      style={styles.picker}
                     >
                       <Picker.Item label="Select account" value="" />
-                      {PAYMENT_ACCOUNTS.map(account => (
+                      {allAccounts.map((account: TAccount) => (
                         <Picker.Item 
                           key={account.id} 
-                          label={`${account.name} ${account.isPrimary ? '(Primary)' : ''}`} 
+                          label={`${account.name}`} 
                           value={account.id} 
                         />
                       ))}
                     </Picker>
                   </View>
                 </View>
-                
-                <View style={{
-                  flex: 1,
-                }}>
-                  <Text style={{
-                    fontSize: 14,
-                    fontWeight: '500',
-                    color: '#374151',
-                    marginBottom: 4,
-                  }}>Transaction Code</Text>
-                  <TextInput
-                    style={{
-                      height: 44,
-                      borderWidth: 1,
-                      borderColor: '#D1D5DB',
-                      borderRadius: 8,
-                      paddingHorizontal: 12,
-                      fontSize: 16,
-                      color: '#1F2937',
-                      backgroundColor: '#FFFFFF',
-                    }}
-                    placeholder="Optional"
-                    value={payment.transactionCode}
-                    onChangeText={(text) => handlePaymentChange(index, 'transactionCode', text)}
-                  />
-                </View>
+              </View>
+              
+              <View style={styles.inputGroup}>
+                <Text style={styles.inputLabel}>Transaction Code</Text>
+                <TextInput
+                  style={styles.input}
+                  placeholder="Optional"
+                  value={payment.transactionCode}
+                  onChangeText={(text) => handlePaymentChange(index, 'transactionCode', text)}
+                />
               </View>
             </View>
           ))}
           
-          <TouchableOpacity style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'center',
-            paddingVertical: 12,
-            borderWidth: 1,
-            borderColor: '#D1D5DB',
-            borderStyle: 'dashed',
-            borderRadius: 8,
-            backgroundColor: '#F9FAFB',
-            marginBottom: 16,
-          }} onPress={handleAddPayment}>
-            <Ionicons name="add-circle-outline" size={20} color="#4F46E5" />
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '500',
-              color: COLORS.primary,
-              marginLeft: 8,
-            }}>Add Another Payment</Text>
+          <TouchableOpacity style={styles.addPaymentCard} onPress={handleAddPayment}>
+            <Ionicons name="add-circle-outline" size={24} color={COLORS.primary} />
+            <Text style={styles.addPaymentText}>Add Payment Method</Text>
           </TouchableOpacity>
           
           {/* Payment Summary */}
-          <View style={{
-            backgroundColor: '#F0F9FF',
-            borderRadius: 8,
-            padding: 16,
-            marginBottom: 16,
-          }}>
-            <View style={{
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 8,
-            }}>
-              <Text style={{
-                fontSize: 14,
-                color: '#0C4A6E',
-              }}>Total Paid:</Text>
-              <Text style={{
-                fontSize: 14,
-                fontWeight: '600',
-                color: '#0C4A6E',
-              }}>
+          <View style={styles.paymentSummaryCard}>
+            <View style={styles.paymentSummaryRow}>
+              <Text style={styles.paymentSummaryLabel}>Total Paid</Text>
+              <Text style={styles.paymentSummaryValue}>
                 KES {calculateTotals.paidAmount.toFixed(2)}
               </Text>
             </View>
             
-            <View style={{
-              flexDirection: 'row',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 8,
-            }}>
-              <Text style={{
-                fontSize: 14,
-                color: '#0C4A6E',
-              }}>Amount Pending:</Text>
-              <Text style={[{
-                fontSize: 14,
-                fontWeight: '600',
-                color: '#0C4A6E',
-              }, styles.pendingAmount]}>
+            <View style={styles.paymentSummaryRow}>
+              <Text style={styles.paymentSummaryLabel}>Amount Due</Text>
+              <Text style={[styles.paymentSummaryValue, styles.pendingAmount]}>
                 KES {calculateTotals.pendingAmount.toFixed(2)}
               </Text>
             </View>
           </View>
           
           {/* Payment Terms and Sales Person */}
-          <View style={{
-            marginBottom: 16,
-          }}>
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '500',
-              color: '#374151',
-              marginBottom: 4,
-            }}>Payment Terms *</Text>
-            <View style={{
-              borderWidth: 1,
-              borderColor: '#D1D5DB',
-              borderRadius: 8,
-              backgroundColor: '#FFFFFF',
-              overflow: 'hidden',
-            }}>
-              <Picker
-                selectedValue={paymentTerms}
-                onValueChange={setPaymentTerms}
-                style={{
-                  height: 54,
-                }}
-              >
-                <Picker.Item label="Full Payment" value="full" />
-                {orderType !== 'walkin' && <Picker.Item label="Deposit Pay" value="deposit" />}
-                {orderType === 'delivery' && <Picker.Item label="Pay After Delivery" value="after_delivery" />}
-              </Picker>
+          <View style={styles.inputRow}>
+            <View style={styles.inputColumn}>
+              <Text style={styles.inputLabel}>Terms *</Text>
+              <View style={styles.pickerContainer}>
+                <Picker
+                  selectedValue={paymentTerms}
+                  onValueChange={setPaymentTerms}
+                  style={styles.picker}
+                >
+                  <Picker.Item label="Full Payment" value="full" />
+                  {orderType !== 'walkin' && <Picker.Item label="Deposit" value="deposit" />}
+                  {orderType === 'delivery' && <Picker.Item label="After Delivery" value="after_delivery" />}
+                </Picker>
+              </View>
+            </View>
+            
+            <View style={styles.inputColumn}>
+              <Text style={styles.inputLabel}>Sales Person</Text>
+              <TextInput
+                style={styles.input}
+                placeholder="Name"
+                value={salesPerson}
+                onChangeText={setSalesPerson}
+              />
             </View>
           </View>
           
-          <View style={{
-            marginBottom: 16,
-          }}>
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '500',
-              color: '#374151',
-              marginBottom: 4,
-            }}>Sales Person</Text>
+          <View style={styles.inputGroup}>
+            <Text style={styles.inputLabel}>Notes</Text>
             <TextInput
-              style={{
-                height: 44,
-                borderWidth: 1,
-                borderColor: '#D1D5DB',
-                borderRadius: 8,
-                paddingHorizontal: 12,
-                fontSize: 16,
-                color: '#1F2937',
-                backgroundColor: '#FFFFFF',
-              }}
-              placeholder="Enter sales person name"
-              value={salesPerson}
-              onChangeText={setSalesPerson}
-            />
-          </View>
-          
-          <View style={{
-            marginBottom: 16,
-          }}>
-            <Text style={{
-              fontSize: 14,
-              fontWeight: '500',
-              color: '#374151',
-              marginBottom: 4,
-            }}>Additional Notes</Text>
-            <TextInput
-              style={[{
-                height: 44,
-                borderWidth: 1,
-                borderColor: '#D1D5DB',
-                borderRadius: 8,
-                paddingHorizontal: 12,
-                fontSize: 16,
-                color: '#1F2937',
-                backgroundColor: '#FFFFFF',
-              }, {
-                height: 100,
-                paddingTop: 12,
-                paddingBottom: 12,
-                textAlignVertical: 'top',
-              }]}
-              placeholder="Any additional notes for this order..."
+              style={[styles.input, styles.textArea]}
+              placeholder="Additional notes..."
               value={notes}
               onChangeText={setNotes}
               multiline
@@ -1873,54 +1381,28 @@ const AddNewOrder = () => {
         
         {/* Submit Button */}
         <TouchableOpacity
-          style={[{
-            marginHorizontal: 16,
-            marginTop: 24,
-            marginBottom: 16,
-            borderRadius: 12,
-            overflow: 'hidden',
-            shadowColor: '#4F46E5',
-            shadowOffset: { width: 0, height: 4 },
-            shadowOpacity: 0.3,
-            shadowRadius: 8,
-            elevation: 6,
-          }, isSubmitting && {
-            opacity: 0.6,
-          }]}
+          style={[styles.submitButton, isSubmitting && styles.submitButtonDisabled]}
           onPress={handleSubmitOrder}
-          disabled={isSubmitting || !selectedShelf || selectedItems.length === 0}
+          disabled={isSubmitting || selectedItems.length === 0}
         >
           <LinearGradient
-            colors={[COLORS.primary, '#7C3AED']}
-            style={{
-              flexDirection: 'row',
-              alignItems: 'center',
-              justifyContent: 'center',
-              paddingVertical: 16,
-              paddingHorizontal: 24,
-            }}
+            colors={['#4F46E5', COLORS.primary]}
+            style={styles.submitGradient}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 0 }}
           >
             {isSubmitting ? (
-              <Ionicons name="sync" size={24} color="#FFFFFF" style={styles.spinner} />
+              <ActivityIndicator size="small" color="#FFFFFF" />
             ) : (
-              <Ionicons name="checkmark-circle-outline" size={24} color="#FFFFFF" />
+              <Ionicons name="checkmark-circle" size={24} color="#FFFFFF" />
             )}
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '600',
-              color: '#FFFFFF',
-              marginLeft: 8,
-            }}>
-              {isSubmitting ? 'Creating Order...' : 'Create Sales Order'}
+            <Text style={styles.submitButtonText}>
+              {isSubmitting ? 'Creating Order...' : `Create Order • KES ${calculateTotals.totalAmount.toFixed(2)}`}
             </Text>
           </LinearGradient>
         </TouchableOpacity>
         
-        <View style={{
-          height: 32,
-        }} />
+        <View style={styles.spacer} />
       </ScrollView>
       
       {/* Shelf Selection Modal */}
@@ -1929,24 +1411,9 @@ const AddNewOrder = () => {
         animationType="slide"
         presentationStyle="pageSheet"
       >
-        <View style={{
-          flex: 1,
-          backgroundColor: '#FFFFFF',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#E5E7EB',
-          }}>
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '600',
-              color: '#1F2937',
-            }}>Select Shelf/Shop</Text>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Shop Location</Text>
             <TouchableOpacity onPress={() => setShowShelfModal(false)}>
               <Ionicons name="close" size={24} color="#6B7280" />
             </TouchableOpacity>
@@ -1967,47 +1434,18 @@ const AddNewOrder = () => {
         animationType="slide"
         presentationStyle="pageSheet"
       >
-        <View style={{
-          flex: 1,
-          backgroundColor: '#FFFFFF',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#E5E7EB',
-          }}>
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '600',
-              color: '#1F2937',
-            }}>Select Collection</Text>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Collection</Text>
             <TouchableOpacity onPress={() => setShowCollectionModal(false)}>
               <Ionicons name="close" size={24} color="#6B7280" />
             </TouchableOpacity>
           </View>
           
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            backgroundColor: '#F9FAFB',
-            borderRadius: 8,
-            borderWidth: 1,
-            borderColor: '#E5E7EB',
-            paddingHorizontal: 12,
-            marginBottom: 16,
-          }}>
+          <View style={styles.searchContainer}>
             <Ionicons name="search" size={20} color="#9CA3AF" style={styles.searchIcon} />
             <TextInput
-              style={{
-                flex: 1,
-                height: 44,
-                fontSize: 16,
-                color: '#1F2937',
-              }}
+              style={styles.searchInput}
               placeholder="Search collections..."
               value={searchQuery}
               onChangeText={setSearchQuery}
@@ -2019,28 +1457,22 @@ const AddNewOrder = () => {
             )}
           </View>
           
-          <FlatList
-            data={filteredCollections}
-            renderItem={renderCollectionItem}
-            keyExtractor={item => item.id}
-            contentContainerStyle={{
-              padding: 16,
-            }}
-            ListEmptyComponent={
-              <View style={{
-                alignItems: 'center',
-                justifyContent: 'center',
-                paddingVertical: 48,
-              }}>
-                <Ionicons name="grid-outline" size={48} color="#9CA3AF" />
-                <Text style={{
-                  fontSize: 16,
-                  color: '#6B7280',
-                  marginTop: 12,
-                }}>No collections found</Text>
-              </View>
-            }
-          />
+          {isFetchingCollections ? (
+            <ActivityIndicator size="large" color={COLORS.primary} style={{ marginTop: 20 }} />
+          ) : (
+            <FlatList
+              data={allCollections}
+              renderItem={renderCollectionItem}
+              keyExtractor={item => item.id}
+              contentContainerStyle={{ padding: 16 }}
+              ListEmptyComponent={
+                <View style={styles.emptyList}>
+                  <Ionicons name="grid-outline" size={48} color="#9CA3AF" />
+                  <Text style={styles.emptyListText}>No collections found</Text>
+                </View>
+              }
+            />
+          )}
         </View>
       </Modal>
       
@@ -2050,24 +1482,9 @@ const AddNewOrder = () => {
         animationType="slide"
         presentationStyle="pageSheet"
       >
-        <View style={{
-          flex: 1,
-          backgroundColor: '#FFFFFF',
-        }}>
-          <View style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            paddingHorizontal: 16,
-            paddingVertical: 12,
-            borderBottomWidth: 1,
-            borderBottomColor: '#E5E7EB',
-          }}>
-            <Text style={{
-              fontSize: 18,
-              fontWeight: '600',
-              color: '#1F2937',
-            }}>Select Items from Collection</Text>
+        <View style={styles.modalContainer}>
+          <View style={styles.modalHeader}>
+            <Text style={styles.modalTitle}>Select Items</Text>
             <TouchableOpacity onPress={() => setShowVariantModal(false)}>
               <Ionicons name="close" size={24} color="#6B7280" />
             </TouchableOpacity>
@@ -2075,134 +1492,54 @@ const AddNewOrder = () => {
           
           {selectedCollection && (
             <>
-              <View style={{
-                flexDirection: 'row',
-                alignItems: 'center',
-                paddingHorizontal: 16,
-                paddingVertical: 20,
-                backgroundColor: '#F5F3FF',
-                borderBottomWidth: 1,
-                borderBottomColor: '#E5E7EB',
-              }}>
-                <View style={{
-                  width: 48,
-                  height: 48,
-                  borderRadius: 12,
-                  backgroundColor: COLORS.primary,
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginRight: 16,
-                }}>
-                  <Ionicons name="grid" size={24} color="#8B5CF6" />
+              <View style={styles.collectionModalHeader}>
+                <View style={styles.collectionModalIcon}>
+                  <Ionicons name="grid" size={24} color="#FFFFFF" />
                 </View>
-                <View style={{
-                  flex: 1,
-                }}>
-                  <Text style={{
-                    fontSize: 18,
-                    fontWeight: '700',
-                    color: '#1F2937',
-                    marginBottom: 4,
-                  }}>{selectedCollection.name}</Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#6B7280',
-                    marginBottom: 4,
-                  }}>
+                <View style={styles.collectionModalInfo}>
+                  <Text style={styles.collectionModalName}>{selectedCollection.name}</Text>
+                  <Text style={styles.collectionModalDescription}>
                     {selectedCollection.description}
                   </Text>
-                  <Text style={{
-                    fontSize: 12,
-                    color: COLORS.primary,
-                    fontWeight: '500',
-                  }}>
-                    {collectionItems.length} items • {selectedCollection.discount}% discount
-                  </Text>
+                  <View style={styles.collectionModalTags}>
+                    <View style={styles.collectionTag}>
+                      <Text style={styles.collectionTagText}>{selectedCollection.items?.length || 0} items</Text>
+                    </View>
+                    <View style={styles.collectionTag}>
+                      <Text style={styles.collectionTagText}>{selectedCollection.discount}% off</Text>
+                    </View>
+                  </View>
                 </View>
               </View>
               
               {/* Collection Discount Input */}
-              <View style={{
-                paddingHorizontal: 16,
-                paddingVertical: 12,
-                backgroundColor: '#FEF3C7',
-                borderBottomWidth: 1,
-                borderBottomColor: '#E5E7EB',
-              }}>
-                <Text style={{
-                  fontSize: 14,
-                  fontWeight: '500',
-                  color: '#92400E',
-                  marginBottom: 4,
-                }}>Collection Discount (%)</Text>
-                <View style={{
-                  flexDirection: 'row',
-                  alignItems: 'center',
-                }}>
+              <View style={styles.collectionDiscountContainer}>
+                <Text style={styles.collectionDiscountLabel}>Collection Discount (%)</Text>
+                <View style={styles.collectionDiscountInput}>
                   <TextInput
-                    style={{
-                      flex: 1,
-                      height: 44,
-                      backgroundColor: '#FFFFFF',
-                      borderWidth: 1,
-                      borderColor: '#F59E0B',
-                      borderRadius: 8,
-                      paddingHorizontal: 12,
-                      fontSize: 16,
-                      color: '#1F2937',
-                      marginRight: 8,
-                    }}
+                    style={styles.collectionDiscountTextInput}
                     value={collectionDiscount.toString()}
                     onChangeText={(text) => setCollectionDiscount(parseFloat(text) || 0)}
                     keyboardType="numeric"
                     placeholder="0"
                   />
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#6B7280',
-                    marginLeft: 4,
-                  }}>%</Text>
+                  <Text style={styles.collectionDiscountPercent}>%</Text>
                 </View>
               </View>
               
-              <ScrollView style={{
-                flex: 1,
-                paddingHorizontal: 16,
-              }}>
-                {collectionItems.map(renderVariantItem)}
+              <ScrollView style={styles.variantsList}>
+                {selectedCollectionData?.pages[0]?.products?.map(renderVariantItem)}
               </ScrollView>
               
               {/* Add to Order Button */}
-              <View style={{
-                padding: 16,
-                borderTopWidth: 1,
-                borderTopColor: '#E5E7EB',
-                backgroundColor: '#FFFFFF',
-              }}>
+              <View style={styles.modalFooter}>
                 <TouchableOpacity
-                  style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    backgroundColor: '#8B5CF6',
-                    paddingVertical: 16,
-                    borderRadius: 12,
-                  }}
+                  style={styles.addToOrderButton}
                   onPress={handleAddCollectionToOrder}
                 >
-                  <Ionicons name="add-circle" size={20} color="#FFFFFF" />
-                  <Text style={{
-                    fontSize: 16,
-                    fontWeight: '600',
-                    color: '#FFFFFF',
-                    marginHorizontal: 8,
-                  }}>Add to Order</Text>
-                  <Text style={{
-                    fontSize: 14,
-                    color: '#FFFFFF',
-                    opacity: 0.9,
-                  }}>
-                    ({Object.values(selectedVariants).filter(v => v && v.quantity > 0).length} items)
+                  <Ionicons name="add-circle" size={24} color="#FFFFFF" />
+                  <Text style={styles.addToOrderText}>
+                    Add to Order ({Object.values(selectedVariants).filter(v => v && v.quantity > 0).length} items)
                   </Text>
                 </TouchableOpacity>
               </View>
@@ -2217,61 +1554,92 @@ const AddNewOrder = () => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#F9FAFB',
+    backgroundColor: '#F8FAFC',
   },
   scrollView: {
     flex: 1,
   },
-  header: {
+  scrollContent: {
+    paddingBottom: 20,
+  },
+  headerGradient: {
+    height: 140,
+    borderBottomRightRadius: 30,
+    borderBottomLeftRadius: 30,
+    paddingTop: 50,
+    paddingBottom: 20,
+  },
+  headerContent: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
+    paddingHorizontal: 20,
     paddingVertical: 12,
   },
   backButton: {
     padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 10,
   },
   headerTitle: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 20,
+    fontWeight: '700',
     color: COLORS.white,
+    letterSpacing: 0.5,
   },
-  headerRight: {
-    width: 40,
+  headerSubtitle: {
+    fontSize: 12,
+    color: 'rgba(255, 255, 255, 0.8)',
+    marginTop: 4,
+  },
+  notificationButton: {
+    padding: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    borderRadius: 10,
   },
   card: {
     backgroundColor: '#FFFFFF',
     marginHorizontal: 16,
-    marginTop: 16,
-    borderRadius: 12,
+    marginTop: 12,
+    borderRadius: 16,
     padding: 16,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 1 },
+    shadowOffset: { width: 0, height: 2 },
     shadowOpacity: 0.05,
-    shadowRadius: 2,
+    shadowRadius: 4,
     elevation: 2,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
   },
   cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 16,
   },
+  cardHeaderIcon: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    backgroundColor: '#EEF2FF',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+  },
   cardTitle: {
     fontSize: 16,
     fontWeight: '600',
     color: '#1F2937',
-    marginLeft: 8,
+    flex: 1,
   },
   shelfSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 16,
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    padding: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     borderStyle: 'dashed',
   },
   selectedShelfInfo: {
@@ -2282,7 +1650,7 @@ const styles = StyleSheet.create({
   selectedShelfIcon: {
     width: 40,
     height: 40,
-    borderRadius: 8,
+    borderRadius: 10,
     backgroundColor: '#EEF2FF',
     alignItems: 'center',
     justifyContent: 'center',
@@ -2292,14 +1660,14 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   selectedShelfName: {
-    fontSize: 16,
+    fontSize: 15,
     fontWeight: '600',
     color: '#1F2937',
     marginBottom: 2,
   },
   selectedShelfLocation: {
-    fontSize: 14,
-    color: '#6B7280',
+    fontSize: 13,
+    color: '#64748B',
   },
   shelfSelectorPlaceholder: {
     flexDirection: 'row',
@@ -2307,53 +1675,60 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   shelfSelectorText: {
-    fontSize: 16,
-    color: '#9CA3AF',
+    fontSize: 15,
+    color: '#94A3B8',
     marginLeft: 8,
   },
-  shelfNote: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginTop: 8,
-    fontStyle: 'italic',
-  },
-  orderTypeOptions: {
+  orderTypeGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
   },
-  orderTypeButton: {
+  orderTypeCard: {
     flex: 1,
-    flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'center',
     paddingVertical: 12,
     paddingHorizontal: 8,
     marginHorizontal: 4,
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     backgroundColor: '#FFFFFF',
   },
-  orderTypeButtonActive: {
-    backgroundColor: '#4F46E5',
+  orderTypeCardActive: {
+    backgroundColor: '#F1F5F9',
     borderColor: '#4F46E5',
   },
-  orderTypeText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#6B7280',
-    marginLeft: 4,
+  orderTypeIcon: {
+    width: 48,
+    height: 48,
+    borderRadius: 12,
+    backgroundColor: '#F8FAFC',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: 8,
   },
-  orderTypeTextActive: {
-    color: '#FFFFFF',
+  orderTypeIconActive: {
+    backgroundColor: '#EEF2FF',
+  },
+  orderTypeIconInactive: {
+    backgroundColor: '#F8FAFC',
+  },
+  orderTypeCardText: {
+    fontSize: 13,
+    fontWeight: '500',
+    color: '#64748B',
+  },
+  orderTypeCardTextActive: {
+    color: '#4F46E5',
+    fontWeight: '600',
   },
   searchContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    backgroundColor: '#F9FAFB',
-    borderRadius: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
     paddingHorizontal: 12,
     marginBottom: 16,
   },
@@ -2363,202 +1738,379 @@ const styles = StyleSheet.create({
   searchInput: {
     flex: 1,
     height: 44,
-    fontSize: 16,
+    fontSize: 15,
     color: '#1F2937',
   },
-  sectionHeader: {
+  tabContainer: {
     flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 4,
+    marginBottom: 16,
   },
-  sectionTitle: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  sectionCount: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  productItem: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
-  },
-  productImage: {
-    width: 60,
-    height: 60,
-    borderRadius: 8,
-    backgroundColor: '#F3F4F6',
-  },
-  productInfo: {
+  tabButton: {
     flex: 1,
-    marginLeft: 12,
-  },
-  productName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  productSku: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
-  },
-  productFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  productPrice: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  productStock: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  addButton: {
-    padding: 8,
-  },
-  collectionsButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    backgroundColor: '#F5F3FF',
-    borderRadius: 8,
-    marginTop: 16,
+    paddingVertical: 10,
+    paddingHorizontal: 12,
+    borderRadius: 10,
   },
-  collectionsButtonText: {
-    fontSize: 16,
+  tabButtonActive: {
+    backgroundColor: '#FFFFFF',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  tabButtonText: {
+    fontSize: 14,
     fontWeight: '500',
-    color: '#8B5CF6',
-    marginHorizontal: 8,
+    color: '#64748B',
+    marginLeft: 6,
   },
-  selectedItem: {
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  tabButtonTextActive: {
+    color: COLORS.primary,
+    fontWeight: '600',
   },
-  selectedItemHeader: {
-    flexDirection: 'row',
+  itemsListContainer: {
+    height: 400,
+  },
+  productsGrid: {
+    paddingVertical: 8,
+  },
+  productsColumnWrapper: {
     justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  productCardWrapper: {
+    width: '50%',
+    paddingHorizontal: 6,
+    marginBottom: 12,
+  },
+  productCard: {
+    flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+    height: 180,
+  },
+  productCardImage: {
+    width: '100%',
+    height: 80,
+    borderRadius: 8,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 8,
+  },
+  productCardContent: {
+    flex: 1,
+  },
+  productCardName: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginBottom: 2,
+  },
+  productCardSku: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 4,
+  },
+  productCardPrice: {
+    fontSize: 14,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  productCardAddButton: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collectionsList: {
+    paddingVertical: 8,
+  },
+  collectionCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
+  },
+  collectionCardHeader: {
+    flexDirection: 'row',
     alignItems: 'center',
     marginBottom: 8,
   },
-  selectedItemName: {
-    fontSize: 16,
-    fontWeight: '500',
-    color: '#1F2937',
+  collectionCardIcon: {
+    width: 40,
+    height: 40,
+    borderRadius: 10,
+    backgroundColor: COLORS.primary,
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginRight: 12,
+    position: 'relative',
+  },
+  collectionCardIconText: {
+    position: 'absolute',
+    top: -4,
+    right: -4,
+    backgroundColor: '#FFFFFF',
+    color: COLORS.primary,
+    fontSize: 10,
+    fontWeight: '700',
+    paddingHorizontal: 4,
+    paddingVertical: 1,
+    borderRadius: 4,
+    borderWidth: 1,
+    borderColor: COLORS.primary,
+  },
+  collectionCardTitleContainer: {
     flex: 1,
-  },
-  collectionSummary: {
-    backgroundColor: '#F0F9FF',
-    padding: 12,
-    borderRadius: 8,
-  },
-  collectionItemsCount: {
-    fontSize: 14,
-    color: '#0C4A6E',
-    marginBottom: 4,
-  },
-  collectionTotal: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
   },
-  collectionTotalText: {
-    fontSize: 16,
+  collectionCardName: {
+    fontSize: 15,
     fontWeight: '600',
-    color: '#0C4A6E',
+    color: '#1F2937',
+    flex: 1,
   },
-  collectionDiscount: {
-    fontSize: 12,
+  collectionDiscountTag: {
+    backgroundColor: '#FEE2E2',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 4,
+    marginLeft: 8,
+  },
+  collectionDiscountTagText: {
+    fontSize: 11,
+    fontWeight: '700',
     color: '#DC2626',
   },
-  itemControls: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-evenly',
+  collectionCardDescription: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 12,
+    lineHeight: 18,
   },
-  quantityControl: {
+  collectionCardFooter: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 20,
-    height: 30,
-    marginTop: 20,
+    justifyContent: 'space-between',
+  },
+  collectionCardPrice: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  collectionCardBadge: {
+    backgroundColor: '#EEF2FF',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 6,
+  },
+  collectionCardBadgeText: {
+    fontSize: 11,
+    fontWeight: '600',
+    color: COLORS.primary,
+  },
+  emptyList: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 60,
+  },
+  emptyListText: {
+    fontSize: 16,
+    color: '#64748B',
+    marginTop: 12,
+    fontWeight: '500',
+  },
+  emptyListSubtext: {
+    fontSize: 14,
+    color: '#94A3B8',
+    marginTop: 4,
+  },
+  selectedItemsBadge: {
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    marginLeft: 8,
+  },
+  selectedItemsBadgeText: {
+    fontSize: 12,
+    fontWeight: '700',
+    color: '#FFFFFF',
+  },
+  selectedItemsScroll: {
+    maxHeight: 300,
+  },
+  selectedItemCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+  },
+  selectedItemHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  selectedItemTitleContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flex: 1,
+  },
+  selectedItemName: {
+    fontSize: 15,
+    fontWeight: '600',
+    color: '#1F2937',
+    marginLeft: 8,
+    flex: 1,
+  },
+  removeItemButton: {
+    width: 32,
+    height: 32,
+    borderRadius: 8,
+    backgroundColor: '#FEE2E2',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  collectionDetails: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 8,
+    padding: 12,
+  },
+  collectionItemsCount: {
+    fontSize: 13,
+    color: '#64748B',
+    marginBottom: 8,
+  },
+  collectionPriceRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  collectionPriceText: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  collectionDiscountText: {
+    fontSize: 12,
+    color: '#DC2626',
+    fontWeight: '600',
+  },
+  itemControlsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  quantitySection: {
+    flex: 1,
+  },
+  discountSection: {
+    flex: 1,
+    alignItems: 'center',
+  },
+  totalSection: {
+    flex: 1,
+    alignItems: 'flex-end',
+  },
+  controlLabel: {
+    fontSize: 12,
+    color: '#64748B',
+    marginBottom: 6,
+    fontWeight: '500',
+  },
+  quantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
   quantityButton: {
     width: 32,
-    height: 48,
-    borderRadius: 6,
+    height: 32,
+    borderRadius: 8,
     borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderColor: '#E2E8F0',
     alignItems: 'center',
     justifyContent: 'center',
     backgroundColor: '#FFFFFF',
   },
   quantityInput: {
-    width: 50,
-    height: 48,
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1F2937',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 6,
-    marginHorizontal: 4,
-  },
-  discountControl: {
-    flexDirection: 'row',
-    alignItems: "flex-start",
-    justifyContent:"space-evenly",
-    width: 90,
-    textAlign: "center",
-    paddingVertical: 4,
-  },
-  discountLabel: {
-    fontSize: 14,
-    color: '#6B7280',
-    marginRight: 4,
-    
-  },
-  discountInput: {
-    width: 90,
+    width: 40,
     height: 32,
     textAlign: 'center',
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#1F2937',
     borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 6,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
+    marginHorizontal: 4,
+    backgroundColor: '#FFFFFF',
+  },
+  discountInputContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  discountInput: {
+    width: 60,
+    height: 32,
+    textAlign: 'center',
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    borderRadius: 8,
     paddingHorizontal: 8,
+    backgroundColor: '#FFFFFF',
   },
   percentSymbol: {
     fontSize: 14,
-    color: '#6B7280',
+    color: '#64748B',
     marginLeft: 4,
-  },
-  itemTotal: {
-    alignItems: 'flex-end',
+    fontWeight: '600',
   },
   itemTotalText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#059669',
   },
-  orderSummary: {
-    backgroundColor: '#F0F9FF',
-    borderRadius: 8,
+  orderSummaryCard: {
+    backgroundColor: '#F1F5F9',
+    borderRadius: 12,
     padding: 16,
     marginTop: 16,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
   summaryRow: {
     flexDirection: 'row',
@@ -2568,47 +2120,61 @@ const styles = StyleSheet.create({
   },
   summaryLabel: {
     fontSize: 14,
-    color: '#0C4A6E',
+    color: '#64748B',
   },
   summaryValue: {
     fontSize: 14,
-    fontWeight: '500',
-    color: '#0C4A6E',
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  divider: {
+    height: 1,
+    backgroundColor: '#E2E8F0',
+    marginVertical: 12,
   },
   totalRow: {
-    borderTopWidth: 1,
-    borderTopColor: '#BAE6FD',
-    paddingTop: 12,
-    marginTop: 4,
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
   },
   totalLabel: {
     fontSize: 16,
-    fontWeight: '600',
-    color: '#0C4A6E',
+    fontWeight: '700',
+    color: '#1F2937',
   },
   totalValue: {
-    fontSize: 18,
+    fontSize: 20,
     fontWeight: '700',
-    color: '#0C4A6E',
+    color: COLORS.primary,
+  },
+  inputRow: {
+    flexDirection: 'row',
+    marginHorizontal: -4,
+    marginBottom: 16,
+  },
+  inputColumn: {
+    flex: 1,
+    paddingHorizontal: 4,
   },
   inputGroup: {
     marginBottom: 16,
   },
   inputLabel: {
-    fontSize: 14,
+    fontSize: 13,
     fontWeight: '500',
-    color: '#374151',
-    marginBottom: 4,
+    color: '#475569',
+    marginBottom: 6,
   },
   input: {
     height: 44,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
     paddingHorizontal: 12,
-    fontSize: 16,
+    fontSize: 15,
     color: '#1F2937',
     backgroundColor: '#FFFFFF',
+    height: 50,
   },
   textArea: {
     height: 100,
@@ -2617,61 +2183,69 @@ const styles = StyleSheet.create({
     textAlignVertical: 'top',
   },
   pickerContainer: {
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
-    borderRadius: 8,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
     backgroundColor: '#FFFFFF',
     overflow: 'hidden',
   },
   picker: {
-    height: 44,
+    height: 50,
+    fontSize: 10,
   },
-  paymentItem: {
-    marginBottom: 16,
-    paddingBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: '#F3F4F6',
+  paymentCard: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
   },
-  paymentHeader: {
+  paymentCardHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: 12,
   },
-  paymentNumber: {
-    fontSize: 14,
+  paymentCardTitle: {
+    fontSize: 15,
     fontWeight: '600',
     color: '#1F2937',
   },
-  paymentInputs: {
-    gap: 12,
+  paymentInputRow: {
+    flexDirection: 'row',
+    marginHorizontal: -4,
+    marginBottom: 12,
   },
-  paymentInputGroup: {
+  paymentInputColumn: {
     flex: 1,
+    paddingHorizontal: 4,
   },
-  addPaymentButton: {
+  addPaymentCard: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 12,
-    borderWidth: 1,
-    borderColor: '#D1D5DB',
+    paddingVertical: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 12,
+    borderWidth: 2,
+    borderColor: '#E2E8F0',
     borderStyle: 'dashed',
-    borderRadius: 8,
-    backgroundColor: '#F9FAFB',
     marginBottom: 16,
   },
   addPaymentText: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#4F46E5',
+    fontSize: 15,
+    fontWeight: '600',
+    color: COLORS.primary,
     marginLeft: 8,
   },
-  paymentSummary: {
-    backgroundColor: '#F0F9FF',
-    borderRadius: 8,
+  paymentSummaryCard: {
+    backgroundColor: '#EEF2FF',
+    borderRadius: 12,
     padding: 16,
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#E0E7FF',
   },
   paymentSummaryRow: {
     flexDirection: 'row',
@@ -2681,23 +2255,24 @@ const styles = StyleSheet.create({
   },
   paymentSummaryLabel: {
     fontSize: 14,
-    color: '#0C4A6E',
+    color: COLORS.primary,
+    fontWeight: '500',
   },
   paymentSummaryValue: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#0C4A6E',
+    fontSize: 16,
+    fontWeight: '700',
+    color: COLORS.primary,
   },
   pendingAmount: {
     color: '#DC2626',
   },
   submitButton: {
     marginHorizontal: 16,
-    marginTop: 24,
+    marginTop: 20,
     marginBottom: 16,
-    borderRadius: 12,
+    borderRadius: 16,
     overflow: 'hidden',
-    shadowColor: '#4F46E5',
+    shadowColor: COLORS.primary,
     shadowOffset: { width: 0, height: 4 },
     shadowOpacity: 0.3,
     shadowRadius: 8,
@@ -2710,26 +2285,17 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
+    paddingVertical: 18,
     paddingHorizontal: 24,
   },
-  spinner: {
-    animationKeyframes: {
-      '0%': { transform: [{ rotate: '0deg' }] },
-      '100%': { transform: [{ rotate: '360deg' }] },
-    },
-    animationDuration: '1s',
-    animationIterationCount: 'infinite',
-    animationTimingFunction: 'linear',
-  },
   submitButtonText: {
-    fontSize: 18,
-    fontWeight: '600',
+    fontSize: 17,
+    fontWeight: '700',
     color: '#FFFFFF',
-    marginLeft: 8,
+    marginLeft: 10,
   },
   spacer: {
-    height: 32,
+    height: 20,
   },
   modalContainer: {
     flex: 1,
@@ -2739,18 +2305,18 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    paddingHorizontal: 16,
-    paddingVertical: 12,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#F1F5F9',
   },
   modalTitle: {
     fontSize: 18,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#1F2937',
   },
   modalList: {
-    padding: 16,
+    padding: 20,
   },
   shelfItem: {
     flexDirection: 'row',
@@ -2758,23 +2324,28 @@ const styles = StyleSheet.create({
     paddingVertical: 16,
     paddingHorizontal: 12,
     backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    borderRadius: 12,
+    marginBottom: 12,
+    borderWidth: 1.5,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
   shelfItemSelected: {
-    backgroundColor: '#F0F9FF',
-    borderColor: '#0EA5E9',
+    backgroundColor: '#F8FAFC',
+    borderColor: COLORS.primary,
   },
   shelfIconContainer: {
     width: 48,
     height: 48,
-    borderRadius: 8,
+    borderRadius: 12,
     backgroundColor: '#EEF2FF',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 16,
   },
   shelfInfo: {
     flex: 1,
@@ -2783,310 +2354,264 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1F2937',
-    marginBottom: 2,
+    marginBottom: 4,
   },
   shelfLocation: {
     fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 2,
+    color: '#64748B',
+    marginBottom: 4,
   },
   shelfItemsCount: {
-    fontSize: 12,
+    fontSize: 13,
     color: '#059669',
+    fontWeight: '500',
   },
-  emptyList: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingVertical: 48,
+  variantCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 16,
+    borderWidth: 1,
+    borderColor: '#F1F5F9',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 1,
   },
-  emptyListText: {
-    fontSize: 16,
-    color: '#6B7280',
-    marginTop: 12,
+  variantCardHeader: {
+    marginBottom: 12,
   },
-  emptyListSubtext: {
-    fontSize: 14,
-    color: '#9CA3AF',
-    marginTop: 4,
-  },
-  collectionItem: {
+  variantCardTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingVertical: 16,
-    paddingHorizontal: 12,
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    marginBottom: 8,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
+    justifyContent: 'space-between',
   },
-  collectionIcon: {
-    width: 48,
-    height: 48,
-    borderRadius: 8,
-    backgroundColor: '#F5F3FF',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginRight: 12,
-    position: 'relative',
-  },
-  collectionItemCount: {
-    position: 'absolute',
-    top: -4,
-    right: -4,
-    backgroundColor: '#8B5CF6',
-    color: '#FFFFFF',
-    fontSize: 10,
+  variantCardTitle: {
+    fontSize: 16,
     fontWeight: '600',
-    paddingHorizontal: 4,
-    paddingVertical: 2,
-    borderRadius: 4,
-  },
-  collectionInfo: {
+    color: '#1F2937',
     flex: 1,
   },
-  collectionName: {
-    fontSize: 16,
+  variantStatusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginLeft: 8,
+  },
+  variantSelectedBadge: {
+    backgroundColor: '#D1FAE5',
+  },
+  variantUnselectedBadge: {
+    backgroundColor: '#F1F5F9',
+  },
+  variantStatusText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#059669',
+  },
+  variantScrollView: {
+    marginHorizontal: -4,
+  },
+  variantOptionCard: {
+    width: 140,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
+    padding: 12,
+    marginHorizontal: 4,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    position: 'relative',
+  },
+  variantOptionCardSelected: {
+    backgroundColor: '#EEF2FF',
+    borderColor: COLORS.primary,
+  },
+  variantOptionImage: {
+    width: '100%',
+    height: 80,
+    borderRadius: 6,
+    backgroundColor: '#F1F5F9',
+    marginBottom: 8,
+  },
+  variantOptionName: {
+    fontSize: 13,
     fontWeight: '600',
     color: '#1F2937',
     marginBottom: 4,
   },
-  collectionDescription: {
+  variantOptionPrice: {
     fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 8,
-  },
-  collectionFooter: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  collectionPrice: {
-    fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#059669',
   },
-  collectionDiscountBadge: {
-    backgroundColor: '#FEE2E2',
-    paddingHorizontal: 8,
-    paddingVertical: 2,
-    borderRadius: 4,
+  variantSelectedIndicator: {
+    position: 'absolute',
+    top: 8,
+    right: 8,
   },
-  collectionDiscountText: {
-    fontSize: 12,
-    fontWeight: '600',
-    color: '#DC2626',
-  },
-  collectionHeader: {
+  noVariantsContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    paddingHorizontal: 16,
-    paddingVertical: 20,
-    backgroundColor: '#F5F3FF',
-    borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    justifyContent: 'space-between',
+    padding: 16,
+    backgroundColor: '#F8FAFC',
+    borderRadius: 10,
   },
-  collectionHeaderIcon: {
+  noVariantsText: {
+    fontSize: 14,
+    color: '#64748B',
+  },
+  noVariantsPrice: {
+    fontSize: 16,
+    fontWeight: '700',
+    color: '#059669',
+  },
+  variantQuantitySection: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginTop: 16,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  variantQuantityLabel: {
+    fontSize: 14,
+    fontWeight: '600',
+    color: '#1F2937',
+  },
+  variantQuantityControls: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  variantQuantityButton: {
+    width: 36,
+    height: 36,
+    borderRadius: 10,
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  variantQuantityInput: {
     width: 48,
-    height: 48,
-    borderRadius: 12,
-    backgroundColor: '#8B5CF6',
+    height: 36,
+    textAlign: 'center',
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1F2937',
+    borderWidth: 1.5,
+    borderColor: '#E2E8F0',
+    borderRadius: 10,
+    marginHorizontal: 8,
+    backgroundColor: '#FFFFFF',
+  },
+  collectionModalHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 20,
+    paddingVertical: 24,
+    backgroundColor: COLORS.primary,
+  },
+  collectionModalIcon: {
+    width: 56,
+    height: 56,
+    borderRadius: 16,
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
     alignItems: 'center',
     justifyContent: 'center',
     marginRight: 16,
   },
-  collectionHeaderInfo: {
+  collectionModalInfo: {
     flex: 1,
   },
-  collectionHeaderName: {
-    fontSize: 18,
+  collectionModalName: {
+    fontSize: 20,
     fontWeight: '700',
-    color: '#1F2937',
+    color: '#FFFFFF',
     marginBottom: 4,
   },
-  collectionHeaderDescription: {
+  collectionModalDescription: {
     fontSize: 14,
-    color: '#6B7280',
-    marginBottom: 4,
+    color: 'rgba(255, 255, 255, 0.9)',
+    marginBottom: 12,
+    lineHeight: 20,
   },
-  collectionHeaderItems: {
+  collectionModalTags: {
+    flexDirection: 'row',
+  },
+  collectionTag: {
+    backgroundColor: 'rgba(255, 255, 255, 0.2)',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 6,
+    marginRight: 8,
+  },
+  collectionTagText: {
     fontSize: 12,
-    color: '#8B5CF6',
-    fontWeight: '500',
+    fontWeight: '600',
+    color: '#FFFFFF',
   },
-  discountInputContainer: {
-    paddingHorizontal: 16,
-    paddingVertical: 12,
-    backgroundColor: '#FEF3C7',
+  collectionDiscountContainer: {
+    paddingHorizontal: 20,
+    paddingVertical: 16,
+    backgroundColor: '#FFFBEB',
     borderBottomWidth: 1,
-    borderBottomColor: '#E5E7EB',
+    borderBottomColor: '#FDE68A',
   },
-  discountInputLabel: {
+  collectionDiscountLabel: {
     fontSize: 14,
-    fontWeight: '500',
+    fontWeight: '600',
     color: '#92400E',
-    marginBottom: 4,
+    marginBottom: 8,
   },
-  discountInputRow: {
+  collectionDiscountInput: {
     flexDirection: 'row',
     alignItems: 'center',
   },
-  discountInput: {
+  collectionDiscountTextInput: {
     flex: 1,
-    height: 44,
+    height: 48,
     backgroundColor: '#FFFFFF',
-    borderWidth: 1,
+    borderWidth: 1.5,
     borderColor: '#F59E0B',
-    borderRadius: 8,
-    paddingHorizontal: 12,
+    borderRadius: 10,
+    paddingHorizontal: 16,
     fontSize: 16,
     color: '#1F2937',
     marginRight: 8,
   },
+  collectionDiscountPercent: {
+    fontSize: 16,
+    color: '#92400E',
+    fontWeight: '600',
+  },
   variantsList: {
     flex: 1,
-    paddingHorizontal: 16,
-  },
-  variantItem: {
-    backgroundColor: '#FFFFFF',
-    borderRadius: 8,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-  },
-  variantHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    marginBottom: 12,
-  },
-  variantItemName: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1F2937',
-  },
-  variantCount: {
-    fontSize: 12,
-    color: '#059669',
-    fontWeight: '500',
-  },
-  variantOptions: {
-    gap: 8,
-  },
-  variantOption: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: 12,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    backgroundColor: '#F9FAFB',
-  },
-  variantOptionSelected: {
-    backgroundColor: '#F0F9FF',
-    borderColor: '#0EA5E9',
-  },
-  variantOptionInfo: {
-    flex: 1,
-  },
-  variantOptionName: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1F2937',
-    marginBottom: 2,
-  },
-  variantOptionPrice: {
-    fontSize: 12,
-    color: '#059669',
-    marginBottom: 2,
-  },
-  variantOptionStock: {
-    fontSize: 11,
-    color: '#6B7280',
-  },
-  singleProduct: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    padding: 12,
-    backgroundColor: '#F3F4F6',
-    borderRadius: 6,
-  },
-  singleProductText: {
-    fontSize: 14,
-    color: '#6B7280',
-  },
-  singleProductPrice: {
-    fontSize: 14,
-    fontWeight: '600',
-    color: '#059669',
-  },
-  variantQuantityControl: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    marginTop: 12,
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
-  },
-  quantityLabel: {
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1F2937',
-  },
-  quantityInputRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  quantityButtonSmall: {
-    width: 28,
-    height: 28,
-    borderRadius: 4,
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    alignItems: 'center',
-    justifyContent: 'center',
-    backgroundColor: '#FFFFFF',
-  },
-  quantityInputSmall: {
-    width: 40,
-    height: 28,
-    textAlign: 'center',
-    fontSize: 14,
-    fontWeight: '500',
-    color: '#1F2937',
-    borderWidth: 1,
-    borderColor: '#E5E7EB',
-    borderRadius: 4,
-    marginHorizontal: 4,
+    paddingHorizontal: 20,
+    paddingVertical: 16,
   },
   modalFooter: {
-    padding: 16,
+    padding: 20,
     borderTopWidth: 1,
-    borderTopColor: '#E5E7EB',
+    borderTopColor: '#F1F5F9',
     backgroundColor: '#FFFFFF',
   },
   addToOrderButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-    backgroundColor: '#8B5CF6',
-    paddingVertical: 16,
+    backgroundColor: COLORS.primary,
+    paddingVertical: 18,
     borderRadius: 12,
   },
   addToOrderText: {
     fontSize: 16,
-    fontWeight: '600',
+    fontWeight: '700',
     color: '#FFFFFF',
-    marginHorizontal: 8,
-  },
-  addToOrderCount: {
-    fontSize: 14,
-    color: '#FFFFFF',
-    opacity: 0.9,
+    marginLeft: 10,
   },
 });
 

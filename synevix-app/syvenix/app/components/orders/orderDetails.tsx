@@ -4,7 +4,10 @@ import { LinearGradient } from "expo-linear-gradient"
 import { COLORS } from "@/constants/Colors"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useNavigation } from "@react-navigation/native"
+import { useLocalSearchParams } from "expo-router"
 import Animated, { FadeInDown, FadeInUp } from "react-native-reanimated"
+import { useGetSaleById } from "@/queries/saleQueries"
+import { useState, useEffect } from "react"
 
 const { width: SCREEN_WIDTH } = Dimensions.get("window")
 
@@ -14,15 +17,17 @@ const ORDER_TYPE_WORKFLOWS = {
     label: "Walk-in",
     icon: "walk",
     description: "Customer collects in-store",
-    statusFlow: ["pending", "payment_confirmed", "completed"],
+    statusFlow: ["topack", "packed", "payment_confirmed", "completed"],
     statusLabels: {
-      pending: "Payment Pending",
+      topack: "To Pack",
+      packed: "Packed",
       payment_confirmed: "Ready for Pickup",
       completed: "Completed"
     },
     statusColors: {
-      pending: "#FF9800",
-      payment_confirmed: "#4CAF50",
+      topack: "#FF9800",
+      packed: "#4CAF50",
+      payment_confirmed: "#2196F3",
       completed: "#607D8B"
     }
   },
@@ -30,18 +35,18 @@ const ORDER_TYPE_WORKFLOWS = {
     label: "Pickup",
     icon: "bag-handle",
     description: "Customer collects after packing",
-    statusFlow: ["topack", "packed", "pickup_recorded", "payment_confirmed", "completed"],
+    statusFlow: ["topack", "packed", "pickup_ready", "payment_confirmed", "completed"],
     statusLabels: {
       topack: "To Pack",
-      packed: "Ready for Pickup",
-      pickup_recorded: "Pickup Recorded",
+      packed: "Packed",
+      pickup_ready: "Ready for Pickup",
       payment_confirmed: "Payment Confirmed",
       completed: "Completed"
     },
     statusColors: {
       topack: "#FF9800",
       packed: "#4CAF50",
-      pickup_recorded: "#2196F3",
+      pickup_ready: "#2196F3",
       payment_confirmed: "#9C27B0",
       completed: "#607D8B"
     }
@@ -68,103 +73,340 @@ const ORDER_TYPE_WORKFLOWS = {
   }
 }
 
+// Helper functions (same as OrdersScreen)
+const getTimeAgo = (timestamp) => {
+  if (!timestamp || !timestamp._seconds) return "Unknown time";
+  
+  const now = Date.now() / 1000;
+  const seconds = timestamp._seconds;
+  const diffInSeconds = now - seconds;
+  
+  if (diffInSeconds < 60) {
+    return "Just now";
+  } else if (diffInSeconds < 3600) {
+    const minutes = Math.floor(diffInSeconds / 60);
+    return `${minutes} min${minutes > 1 ? 's' : ''} ago`;
+  } else if (diffInSeconds < 86400) {
+    const hours = Math.floor(diffInSeconds / 3600);
+    return `${hours} hour${hours > 1 ? 's' : ''} ago`;
+  } else if (diffInSeconds < 2592000) {
+    const days = Math.floor(diffInSeconds / 86400);
+    return `${days} day${days > 1 ? 's' : ''} ago`;
+  } else {
+    return new Date(seconds * 1000).toLocaleDateString();
+  }
+}
+
+const getPriority = (timestamp) => {
+  if (!timestamp || !timestamp._seconds) return "Low";
+  
+  const now = Date.now() / 1000;
+  const seconds = timestamp._seconds;
+  const diffInHours = (now - seconds) / 3600;
+  
+  if (diffInHours > 3) return "High";
+  if (diffInHours > 1) return "Medium";
+  return "Low";
+}
+
+const getPaymentDetails = (order) => {
+  const amountPending = parseFloat(order.amountPending || "0");
+  const amountPaid = parseFloat(order.amountPaid || "0");
+  const totalAmount = parseFloat(order.totalAmount || "0");
+  
+  switch(order.paymentTerms) {
+    case "full":
+      if (amountPaid >= totalAmount) {
+        return {
+          paymentId: "full",
+          payment: "Full Payment",
+          paymentStatus: "confirmed",
+          icon: "checkmark-circle",
+          color: "#4CAF50"
+        };
+      } else {
+        return {
+          paymentId: "full",
+          payment: "Payment Pending",
+          paymentStatus: "pending",
+          icon: "close-circle",
+          color: "#F44336"
+        };
+      }
+    case "deposit":
+      if (amountPending === 0) {
+        return {
+          paymentId: "deposit",
+          payment: "Deposit Paid",
+          paymentStatus: "deposit_paid",
+          icon: "time",
+          color: "#FF9800"
+        };
+      } else {
+        return {
+          paymentId: "deposit",
+          payment: `Balance Due (KES ${amountPending.toFixed(2)})`,
+          paymentStatus: "balance_due",
+          icon: "alert-circle",
+          color: "#F44336"
+        };
+      }
+    case "after":
+      if (amountPending === 0) {
+        return {
+          paymentId: "after",
+          payment: "Payment Completed",
+          paymentStatus: "confirmed",
+          icon: "checkmark-circle",
+          color: "#4CAF50"
+        };
+      } else {
+        return {
+          paymentId: "after",
+          payment: `Balance Due (KES ${amountPending.toFixed(2)})`,
+          paymentStatus: "balance_due",
+          icon: "alert-circle",
+          color: "#F44336"
+        };
+      }
+    default:
+      return {
+        paymentId: "full",
+        payment: "Payment Pending",
+        paymentStatus: "pending",
+        icon: "close-circle",
+        color: "#9E9E9E"
+      };
+  }
+}
+
+const getWorkflowDetails = (order) => {
+  const workflow = ORDER_TYPE_WORKFLOWS[order.orderType] || ORDER_TYPE_WORKFLOWS.walkin;
+  const status = order.status || "topack";
+  const statusFlow = workflow.statusFlow;
+  const currentStep = statusFlow.indexOf(status);
+  
+  return {
+    workflow,
+    currentStep: currentStep >= 0 ? currentStep : 0,
+    totalSteps: statusFlow.length - 1,
+    statusColor: workflow.statusColors[status] || "#FF9800",
+    statusLabel: workflow.statusLabels[status] || "To Pack",
+    statusBg: `rgba(${parseInt(workflow.statusColors[status]?.slice(1, 3) || "255", 16)}, ${parseInt(workflow.statusColors[status]?.slice(3, 5) || "152", 16)}, ${parseInt(workflow.statusColors[status]?.slice(5, 7) || "0", 16)}, 0.1)`
+  };
+}
+
+const getNextAction = (order) => {
+  const workflow = ORDER_TYPE_WORKFLOWS[order.orderType] || ORDER_TYPE_WORKFLOWS.walkin;
+  const status = order.status || "topack";
+  const statusFlow = workflow.statusFlow;
+  const currentIndex = statusFlow.indexOf(status);
+  
+  if (currentIndex < statusFlow.length - 1) {
+    const nextStatus = statusFlow[currentIndex + 1];
+    
+    switch(nextStatus) {
+      case "packed":
+        return "Mark as Packed";
+      case "payment_confirmed":
+        return "Confirm Payment";
+      case "pickup_ready":
+        return "Ready for Pickup";
+      case "dispatched":
+        return "Dispatch Order";
+      case "delivered":
+        return "Mark as Delivered";
+      case "completed":
+        return "Complete Order";
+      default:
+        return "Next Step";
+    }
+  }
+  
+  // Default actions based on status
+  switch(status) {
+    case "completed":
+      return "View Details";
+    case "delivered":
+      return order.paymentTerms === "after" && parseFloat(order.amountPending || "0") > 0 
+        ? "Collect Payment" 
+        : "Complete Order";
+    case "payment_confirmed":
+      return "Complete Order";
+    default:
+      return "View Details";
+  }
+}
+
+const formatDate = (timestamp) => {
+  if (!timestamp || !timestamp._seconds) return "Unknown date";
+  const date = new Date(timestamp._seconds * 1000);
+  return date.toLocaleDateString('en-KE', {
+    year: 'numeric',
+    month: 'long',
+    day: 'numeric'
+  });
+}
+
+const formatTime = (timestamp) => {
+  if (!timestamp || !timestamp._seconds) return "Unknown time";
+  const date = new Date(timestamp._seconds * 1000);
+  return date.toLocaleTimeString('en-KE', {
+    hour: '2-digit',
+    minute: '2-digit'
+  });
+}
+
 export default function OrderDetailsScreen() {
   const navigation = useNavigation()
+  const params = useLocalSearchParams()
+  const orderId = params.orderId as string
   
-  // Enhanced dummy data matching OrdersScreen structure
-  const order = {
-    id: "#D001",
-    store: "ElectroMart",
-    status: "packed",
-    statusLabel: "Packed",
-    statusColor: "#4CAF50",
-    statusBg: "rgba(76, 175, 80, 0.1)",
-    amount: "KES 8,500",
-    time: "2:30 PM • Today",
-    items: [
-      { name: "Wireless Headphones Pro", sku: "WH-2024", qty: 2, price: "KES 2,500", total: "KES 5,000" },
-      { name: "USB-C Fast Charging Cable", sku: "UC-1001", qty: 3, price: "KES 800", total: "KES 2,400" },
-      { name: "Premium Phone Case", sku: "PC-456", qty: 1, price: "KES 1,100", total: "KES 1,100" },
-    ],
-    shelf: "#A-12",
-    payment: "Full Payment",
-    paymentMethod: "M-Pesa",
-    transactionCode: "MPX78901234",
-    paymentStatus: "confirmed",
-    orderType: "delivery",
-    action: "Dispatch Order",
-    priority: "High",
-    progress: 50,
-    workflow: ORDER_TYPE_WORKFLOWS.delivery,
-    currentStep: 1,
-    totalSteps: 4,
+  // Fetch order data by ID
+  const { data: orderData, isLoading, isError } = useGetSaleById(orderId)
+  //console.log("Order data: ", JSON.parse(orderData?.pages[0]))
+  
+  // Transform API data
+  const transformOrderData = (sale) => {
+    if (!sale) return null;
     
-    // Additional fields
-    customerName: "John Doe",
-    phoneNumber: "+254 712 345 678",
-    email: "john.doe@email.com",
-    deliveryAddress: "123 Main St, Nairobi",
-    deliveryMethod: "Express Delivery",
-    deliveryFee: "KES 300",
-    errandFee: "KES 200",
-    salesPerson: "Jane Smith",
-    orderDate: "2024-03-15",
-    orderTime: "10:30 AM",
-    completedDate: "2024-03-15",
-    completedTime: "2:30 PM",
-    note: "Leave package at security desk",
+    const workflowDetails = getWorkflowDetails(sale);
+    const paymentDetails = getPaymentDetails(sale);
+    const priority = getPriority(sale.createdAt);
     
-    // Payment details
-    subTotal: "KES 8,500",
-    tax: "KES 1,275",
-    discount: "KES 500",
-    totalAmount: "KES 9,575",
-    amountPaid: "KES 9,575",
-    amountPending: "KES 0",
-    
-    // Customer info
-    customerId: "CUST-7890",
-    customerEmail: "john.doe@email.com",
-    customerPhone: "+254 712 345 678",
-    
-    // Timeline
-    timeline: [
-      { time: "10:30 AM", date: "Today", action: "Order placed", icon: "add-circle", color: COLORS.primary },
-      { time: "11:15 AM", date: "Today", action: "Payment confirmed", icon: "checkmark-circle", color: "#4CAF50" },
-      { time: "1:45 PM", date: "Today", action: "Order packed", icon: "cube", color: "#4CAF50" },
-      { time: "2:30 PM", date: "Today", action: "Ready for dispatch", icon: "time", color: "#FF9800" },
-    ]
-  }
-
-  const getWorkflowProgress = () => {
-    return Math.round((order.currentStep / order.totalSteps) * 100)
-  }
-
-  const getNextAction = () => {
-    const workflow = ORDER_TYPE_WORKFLOWS[order.orderType]
-    const currentIndex = workflow.statusFlow.indexOf(order.status)
-    
-    if (currentIndex < workflow.statusFlow.length - 1) {
-      const nextStatus = workflow.statusFlow[currentIndex + 1]
-      
-      switch(nextStatus) {
-        case "payment_confirmed":
-          return "Confirm Payment"
-        case "packed":
-          return "Mark as Packed"
-        case "pickup_recorded":
-          return "Record Pickup"
-        case "dispatched":
-          return "Dispatch Order"
-        case "delivered":
-          return "Mark as Delivered"
-        case "completed":
-          return "Complete Order"
-        default:
-          return "Next Step"
+    // Create timeline from order events
+    const timeline = [
+      { 
+        time: formatTime(sale.createdAt), 
+        date: formatDate(sale.createdAt), 
+        action: "Order placed", 
+        icon: "add-circle", 
+        color: COLORS.primary 
       }
+    ];
+    
+    // Add payment event if payment exists
+    if (sale.payments && sale.payments.length > 0) {
+      timeline.push({
+        time: formatTime(sale.updatedAt || sale.createdAt),
+        date: formatDate(sale.updatedAt || sale.createdAt),
+        action: paymentDetails.paymentStatus === "confirmed" ? "Payment confirmed" : "Payment initiated",
+        icon: paymentDetails.paymentStatus === "confirmed" ? "checkmark-circle" : "time",
+        color: paymentDetails.paymentStatus === "confirmed" ? "#4CAF50" : "#FF9800"
+      });
     }
-    return order.action
+    
+    // Add status events
+    if (sale.status !== "topack") {
+      timeline.push({
+        time: formatTime(sale.updatedAt || sale.createdAt),
+        date: formatDate(sale.updatedAt || sale.createdAt),
+        action: workflowDetails.statusLabel,
+        icon: workflowDetails.statusLabel.includes("Packed") ? "cube" : 
+               workflowDetails.statusLabel.includes("Dispatched") ? "car" :
+               workflowDetails.statusLabel.includes("Delivered") ? "checkmark-done" :
+               workflowDetails.statusLabel.includes("Completed") ? "checkmark-done-circle" : "time",
+        color: workflowDetails.statusColor
+      });
+    }
+    
+    return {
+      id: sale.saleId || sale.id,
+      store: "La Luna Jewellery",
+      status: sale.status || "topack",
+      statusLabel: workflowDetails.statusLabel,
+      statusColor: workflowDetails.statusColor,
+      statusBg: workflowDetails.statusBg,
+      amount: `KES ${parseFloat(sale.totalAmount || "0").toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      time: getTimeAgo(sale.createdAt),
+      items: (sale.items || []).map((item, index) => ({
+        name: item.label || "Item",
+        sku: item.sku || `ITEM-${index + 1}`,
+        qty: item.quantity || 1,
+        price: `KES ${(parseFloat(item.price || "0")).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+        total: `KES ${(parseFloat(item.total || "0")).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+      })),
+      shelf: "#" + (Math.floor(Math.random() * 200) + 1), // Generate random shelf for now
+      payment: paymentDetails.payment,
+      paymentMethod: sale.payments?.[0]?.method || "N/A",
+      transactionCode: sale.payments?.[0]?.transactionCode || "N/A",
+      paymentStatus: paymentDetails.paymentStatus,
+      orderType: sale.orderType || "walkin",
+      action: getNextAction(sale),
+      priority: priority,
+      progress: Math.round((workflowDetails.currentStep / workflowDetails.totalSteps) * 100),
+      workflow: workflowDetails.workflow,
+      currentStep: workflowDetails.currentStep,
+      totalSteps: workflowDetails.totalSteps,
+      completed: sale.status === "completed",
+      
+      // Additional fields from API
+      customerName: sale.customerName || "Customer",
+      phoneNumber: sale.phoneNumber || "N/A",
+      email: sale.email || "N/A",
+      deliveryAddress: sale.deliveryAddress || "N/A",
+      deliveryMethod: "Standard Delivery", // Default
+      deliveryFee: `KES ${parseFloat(sale.deliveryFee || "0").toFixed(2)}`,
+      errandFee: `KES ${parseFloat(sale.errandFee || "0").toFixed(2)}`,
+      salesPerson: sale.salesPerson || "Sales Agent",
+      orderDate: formatDate(sale.createdAt),
+      orderTime: formatTime(sale.createdAt),
+      completedDate: sale.status === "completed" ? formatDate(sale.updatedAt) : "Not completed",
+      completedTime: sale.status === "completed" ? formatTime(sale.updatedAt) : "Not completed",
+      note: sale.note || "No special instructions",
+      
+      // Payment details
+      subTotal: `KES ${parseFloat(sale.totalAmount || "0").toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      tax: `KES ${(parseFloat(sale.totalAmount || "0") * 0.15).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`, // Assuming 15% tax
+      discount: `KES ${(parseFloat(sale.discount || "0")).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      totalAmount: `KES ${(parseFloat(sale.saleTotal || sale.totalAmount || "0")).toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      amountPaid: `KES ${parseFloat(sale.amountPaid || "0").toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      amountPending: `KES ${parseFloat(sale.amountPending || "0").toLocaleString('en-KE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      
+      // Customer info
+      customerId: sale.customerId || "N/A",
+      customerEmail: sale.email || "N/A",
+      customerPhone: sale.phoneNumber || "N/A",
+      
+      // Timeline
+      timeline: timeline,
+      
+      // Original sale data
+      saleData: sale
+    };
+  };
+
+  const order = transformOrderData(orderData?.pages[0]);
+
+  if (isLoading) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.loadingContainer}>
+          <Ionicons name="refresh-circle" size={80} color={COLORS.primary} />
+          <Text style={styles.loadingText}>Loading Order Details...</Text>
+        </View>
+      </SafeAreaView>
+    );
+  }
+
+  if (isError || !order) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <View style={styles.errorContainer}>
+          <Ionicons name="alert-circle" size={80} color="#FF6B6B" />
+          <Text style={styles.errorTitle}>Failed to load order</Text>
+          <Text style={styles.errorText}>
+            Order #{orderId} could not be found
+          </Text>
+          <TouchableOpacity 
+            style={styles.backButton}
+            onPress={() => navigation.goBack()}
+          >
+            <Text style={styles.backButtonText}>Go Back</Text>
+          </TouchableOpacity>
+        </View>
+      </SafeAreaView>
+    );
   }
 
   const InfoItem = ({ label, value, icon = null }: { label: string; value: string; icon?: string | null }) => (
@@ -274,7 +516,7 @@ export default function OrderDetailsScreen() {
           <View style={styles.progressSection}>
             <View style={styles.progressHeader}>
               <Text style={styles.progressLabel}>Order Progress</Text>
-              <Text style={styles.progressPercentage}>{getWorkflowProgress()}%</Text>
+              <Text style={styles.progressPercentage}>{order.progress}%</Text>
             </View>
             
             <View style={styles.progressBar}>
@@ -282,7 +524,7 @@ export default function OrderDetailsScreen() {
                 style={[
                   styles.progressFill,
                   { 
-                    width: `${getWorkflowProgress()}%`,
+                    width: `${order.progress}%`,
                     backgroundColor: order.statusColor
                   }
                 ]} 
@@ -410,18 +652,24 @@ export default function OrderDetailsScreen() {
               <Text style={styles.paymentLabel}>Tax (15%)</Text>
               <Text style={styles.paymentValue}>{order.tax}</Text>
             </View>
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Discount</Text>
-              <Text style={[styles.paymentValue, styles.discountText]}>-{order.discount}</Text>
-            </View>
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Delivery Fee</Text>
-              <Text style={styles.paymentValue}>{order.deliveryFee}</Text>
-            </View>
-            <View style={styles.paymentRow}>
-              <Text style={styles.paymentLabel}>Errand Fee</Text>
-              <Text style={styles.paymentValue}>{order.errandFee}</Text>
-            </View>
+            {parseFloat(order.discount.replace('KES ', '').replace(',', '')) > 0 && (
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Discount</Text>
+                <Text style={[styles.paymentValue, styles.discountText]}>-{order.discount}</Text>
+              </View>
+            )}
+            {parseFloat(order.deliveryFee.replace('KES ', '').replace(',', '')) > 0 && (
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Delivery Fee</Text>
+                <Text style={styles.paymentValue}>{order.deliveryFee}</Text>
+              </View>
+            )}
+            {parseFloat(order.errandFee.replace('KES ', '').replace(',', '')) > 0 && (
+              <View style={styles.paymentRow}>
+                <Text style={styles.paymentLabel}>Errand Fee</Text>
+                <Text style={styles.paymentValue}>{order.errandFee}</Text>
+              </View>
+            )}
             
             <View style={styles.totalDivider} />
             
@@ -431,13 +679,46 @@ export default function OrderDetailsScreen() {
             </View>
             
             <View style={styles.paymentMethod}>
-              <View style={styles.paymentStatusBadge}>
-                <Ionicons name="checkmark-circle" size={16} color="#4CAF50" />
-                <Text style={styles.paymentStatusText}>Payment Completed</Text>
+              <View style={[
+                styles.paymentStatusBadge,
+                { 
+                  backgroundColor: order.paymentStatus === "confirmed" ? "rgba(76, 175, 80, 0.1)" :
+                                  order.paymentStatus === "deposit_paid" ? "rgba(255, 152, 0, 0.1)" :
+                                  order.paymentStatus === "balance_due" ? "rgba(244, 67, 54, 0.1)" :
+                                  "rgba(158, 158, 158, 0.1)"
+                }
+              ]}>
+                <Ionicons 
+                  name={
+                    order.paymentStatus === "confirmed" ? "checkmark-circle" :
+                    order.paymentStatus === "deposit_paid" ? "time" :
+                    order.paymentStatus === "balance_due" ? "alert-circle" : "close-circle"
+                  } 
+                  size={16} 
+                  color={
+                    order.paymentStatus === "confirmed" ? "#4CAF50" :
+                    order.paymentStatus === "deposit_paid" ? "#FF9800" :
+                    order.paymentStatus === "balance_due" ? "#F44336" : "#9E9E9E"
+                  } 
+                />
+                <Text style={[
+                  styles.paymentStatusText,
+                  { 
+                    color: order.paymentStatus === "confirmed" ? "#4CAF50" :
+                           order.paymentStatus === "deposit_paid" ? "#FF9800" :
+                           order.paymentStatus === "balance_due" ? "#F44336" : "#9E9E9E"
+                  }
+                ]}>
+                  {order.payment}
+                </Text>
               </View>
               <View style={styles.paymentDetails}>
-                <Text style={styles.paymentDetailLabel}>Method: {order.paymentMethod}</Text>
-                <Text style={styles.paymentDetailLabel}>Reference: {order.transactionCode}</Text>
+                {order.paymentMethod !== "N/A" && (
+                  <Text style={styles.paymentDetailLabel}>Method: {order.paymentMethod}</Text>
+                )}
+                {order.transactionCode !== "N/A" && (
+                  <Text style={styles.paymentDetailLabel}>Reference: {order.transactionCode}</Text>
+                )}
               </View>
             </View>
           </View>
@@ -474,7 +755,7 @@ export default function OrderDetailsScreen() {
         </Animated.View>
 
         {/* Customer Notes */}
-        {order.note && (
+        {order.note && order.note !== "No special instructions" && (
           <Animated.View 
             entering={FadeInDown.delay(900)}
             style={styles.sectionCard}
@@ -508,7 +789,7 @@ export default function OrderDetailsScreen() {
             style={[styles.primaryButton, { backgroundColor: order.statusColor }]}
             onPress={() => {}}
           >
-            <Text style={styles.primaryButtonText}>{getNextAction()}</Text>
+            <Text style={styles.primaryButtonText}>{order.action}</Text>
             <Ionicons name="arrow-forward" size={20} color={COLORS.white} />
           </TouchableOpacity>
         </Animated.View>
@@ -523,6 +804,38 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: "#f5f5f5",
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+  },
+  loadingText: {
+    fontSize: 18,
+    color: COLORS.text,
+    marginTop: 20,
+    fontFamily: "Montserrat-SemiBold",
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    padding: 20,
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: "bold",
+    color: COLORS.text,
+    marginTop: 20,
+    marginBottom: 10,
+    fontFamily: "Montserrat-Bold",
+  },
+  errorText: {
+    fontSize: 16,
+    color: COLORS.textLight,
+    textAlign: "center",
+    marginBottom: 20,
+    fontFamily: "Montserrat-Regular",
   },
   scrollContent: {
     flexGrow: 1,
@@ -888,7 +1201,6 @@ const styles = StyleSheet.create({
   paymentStatusBadge: {
     flexDirection: "row",
     alignItems: "center",
-    backgroundColor: "rgba(76, 175, 80, 0.1)",
     paddingHorizontal: 12,
     paddingVertical: 8,
     borderRadius: 8,
@@ -898,7 +1210,6 @@ const styles = StyleSheet.create({
   },
   paymentStatusText: {
     fontSize: 14,
-    color: "#4CAF50",
     fontWeight: "600",
     fontFamily: "Montserrat-SemiBold",
   },
