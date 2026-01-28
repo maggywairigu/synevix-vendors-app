@@ -1,0 +1,1 @@
+# synevix-vendors-app
